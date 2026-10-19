@@ -99,11 +99,13 @@ pub fn printer_attributes<B: Board>(config: &Config, now: u32, busy: bool, queue
 
     // Media.
     let media = B::MEDIA;
+    // The panel holds no paper, so "ready" is a hint for client defaults; see READY_MEDIA.
+    let ready = &media[..B::READY_MEDIA.clamp(1, media.len())];
     g.push("media-default", [Value::keyword(media[0].keyword)]);
-    g.push("media-ready", [Value::keyword(media[0].keyword)]);
+    g.push("media-ready", ready.iter().map(|m| Value::keyword(m.keyword)).collect::<Vec<_>>());
     g.push("media-supported", media.iter().map(|m| Value::keyword(m.keyword)).collect::<Vec<_>>());
     g.push("media-col-default", [media_col(&media[0])]);
-    g.push("media-col-ready", [media_col(&media[0])]);
+    g.push("media-col-ready", ready.iter().map(media_col).collect::<Vec<_>>());
     g.push("media-col-database", media.iter().map(media_col).collect::<Vec<_>>());
     g.push("media-col-supported", keywords(&["media-size", "media-size-name", "media-top-margin", "media-bottom-margin", "media-left-margin", "media-right-margin"]));
     let size = |m: &Media| {

@@ -60,7 +60,8 @@ pub const ISO_A4: Media = Media { keyword: "iso_a4_210x297mm", width_hmm: 21000,
 pub const NA_LETTER: Media = Media { keyword: "na_letter_8.5x11in", width_hmm: 21590, height_hmm: 27940 };
 
 /// Small sizes first: the first entry is `media-default`, which makes print dialogs lay
-/// content out large enough to read on a small panel.
+/// content out large enough to read on a small panel. 4×6 comes second so it is reported
+/// as ready too (see [`Board::READY_MEDIA`]).
 pub const DEFAULT_MEDIA: &[Media] = &[ISO_A6, NA_INDEX_4X6, ISO_A5, ISO_A4, NA_LETTER];
 
 pub trait Board {
@@ -77,6 +78,11 @@ pub trait Board {
     /// Raster resolutions (dpi) to advertise. Clients render at one of these.
     const RESOLUTIONS: &'static [u16];
     const MEDIA: &'static [Media];
+    /// How many leading [`Board::MEDIA`] entries to report as loaded (`media-ready`,
+    /// `media-col-ready`). Android's built-in print service takes its default from the
+    /// ready sizes it knows and has no A6, so the ready list must include a size it does
+    /// know (4×6, A5, …) or it falls back to its own default (A4/Letter).
+    const READY_MEDIA: usize = 2;
 
     /// Panel size after rotation, i.e. the portrait canvas pages are rendered into.
     fn logical_size() -> (u16, u16) {

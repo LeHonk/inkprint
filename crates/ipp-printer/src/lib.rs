@@ -280,6 +280,19 @@ mod tests {
     }
 
     #[test]
+    fn ready_media_includes_a_size_android_knows() {
+        let mut p = printer();
+        let resp = respond(p.handle(&request(Operation::GetPrinterAttributes, &[]), 0));
+        let attrs = resp.group(DelimiterTag::Printer).unwrap();
+        let keywords = |name: &str| -> alloc::vec::Vec<&str> {
+            attrs.get(name).unwrap().values.iter().filter_map(Value::as_str).collect()
+        };
+        assert_eq!(keywords("media-default"), ["iso_a6_105x148mm"]);
+        assert_eq!(keywords("media-ready"), ["iso_a6_105x148mm", "na_index-4x6_4x6in"]);
+        assert_eq!(attrs.get("media-col-ready").unwrap().values.len(), 2);
+    }
+
+    #[test]
     fn media_col_database_only_when_named() {
         let mut p = printer();
         let has_db = |resp: &Message| resp.group(DelimiterTag::Printer).unwrap().get("media-col-database").is_some();
