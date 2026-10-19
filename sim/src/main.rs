@@ -46,6 +46,7 @@ async fn main() -> std::io::Result<()> {
         uri: format!("ipp://{host}.local:{port}/ipp/print"),
         location: "Simulator".into(),
         more_info: format!("http://{host}.local:{port}/"),
+        icon: None,
     };
     print_avahi_command::<Selected>(&config, port);
 
@@ -124,6 +125,10 @@ async fn handle(req: Request<Incoming>, state: Arc<Mutex<State>>) -> Result<Resp
     };
     let pending = match outcome {
         Outcome::Respond(resp) => return Ok(ipp_reply(&resp)),
+        Outcome::Identify(resp) => {
+            println!("identify requested");
+            return Ok(ipp_reply(&resp));
+        }
         Outcome::ReceiveDocument(p) => p,
     };
 

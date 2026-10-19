@@ -14,7 +14,7 @@ use edge_http::io::server::Server;
 use edge_nal::TcpBind;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use ipp_http::{DiscardDocuments, IppHandler};
+use ipp_http::{IppHandler, ShowLastPage};
 use ipp_printer::{Config, Printer};
 
 static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
@@ -28,9 +28,12 @@ fn main() {
         uri: format!("ipp://localhost:{port}/ipp/print"),
         location: "Host".into(),
         more_info: format!("http://localhost:{port}/"),
+        icon: Some(format!("http://localhost:{port}{}", ipp_http::ICON_PATH)),
     };
     let printer = Mutex::<NoopRawMutex, _>::new(RefCell::new(Printer::<Inkplate6>::new(config)));
-    let handler = IppHandler::new(&printer, DiscardDocuments, || START.get().unwrap().elapsed().as_secs() as u32);
+    let show = |page: render::GrayImage| println!("last page: {}x{}", page.width, page.height);
+    let sink = ShowLastPage { max_width: 900, show };
+    let handler = IppHandler::new(&printer, sink, || START.get().unwrap().elapsed().as_secs() as u32);
     let addr: SocketAddr = ([0, 0, 0, 0], port).into();
     println!("serving {} on {addr}", ipp_http::PRINTER_PATH);
     async_io::block_on(async {

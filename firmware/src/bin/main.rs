@@ -162,6 +162,7 @@ async fn start_network(
     let config = identity.printer_config();
     let txt = net::txt_records(&config);
     let printer: &'static SharedPrinter = PRINTER.init(Mutex::new(RefCell::new(Printer::new(config))));
+    net::publish(identity, printer);
 
     let rng = esp_hal::rng::Rng::new();
     let seed = (rng.random() as u64) << 32 | rng.random() as u64;

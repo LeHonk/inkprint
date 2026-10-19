@@ -70,6 +70,19 @@ avahi-browse -rt _ipp._tcp
 ipptool -tv ipp://inkplate-xxxx.local:631/ipp/print get-printer-attributes.test
 ```
 
+Identify-Printer shows a status screen (name, address, IP, last job) for 15 seconds and
+then redraws the last page. Before the first job since boot there is nothing to redraw,
+so the status screen stays. To trigger it:
+
+```bash
+ipptool -t ipp://inkplate-xxxx.local:631/ipp/print identify-printer-display.test
+```
+
+`cargo run -p sim --example status_preview` renders the screen to `target/status.png`.
+
+CUPS' `ipp-everywhere.test` passes except for JPEG: IPP Everywhere requires `image/jpeg`,
+which is not supported yet (phones and computers send PWG Raster or URF).
+
 The firmware has its own toolchain (`channel = "esp"`) and target, so it sits outside
 the Cargo workspace and depends on the shared crates by path.
 

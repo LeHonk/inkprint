@@ -264,3 +264,19 @@ fn init_errors_name_the_device() {
         assert_eq!(err, Some(Error::Init { device, error: Nack }));
     }
 }
+
+#[test]
+fn burn_in_clean_runs_upstream_cycle_and_powers_down() {
+    let (mut p, bus, i2c) = panel(true);
+    p.burn_in_clean().unwrap();
+    let rows = bus.rows();
+    let frames: Vec<u8> = rows.chunks(H).map(|f| f[0][0]).collect();
+    let expected: Vec<u8> = luts::BURN_IN_SEQUENCE
+        .iter()
+        .flat_map(|&(kind, rep)| std::iter::repeat_n(luts::CLEAN_FILL[kind as usize], rep as usize))
+        .collect();
+    assert_eq!(frames.len(), 70);
+    assert_eq!(frames, expected);
+    assert_eq!(bus.0.borrow().last(), Some(&Ev::Disable));
+    assert_eq!(i2c.pmic_writes().last(), Some(&vec![tps::REG_ENABLE, 0]));
+}

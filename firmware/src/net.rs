@@ -8,6 +8,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::net::{Ipv4Addr, SocketAddr};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use board::{Board, Selected};
 use dnssd::{HostAnswersMdnsHandler, PRINTER_SUBTYPES, PrinterService};
@@ -20,14 +21,16 @@ use embassy_futures::select::select;
 use embassy_net::{DhcpConfig, Runner, Stack, StackResources};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::{CriticalSectionRawMutex, NoopRawMutex};
+use embassy_sync::once_lock::OnceLock;
 use embassy_sync::signal::Signal;
+use embedded_io_async::Read;
 use embassy_time::{Duration, Instant, Timer};
 use esp_hal::rng::Rng;
 use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{AuthenticationMethodConfig, Config as WifiConfig, Interface, WifiController};
-use ipp_http::{DiscardDocuments, IppHandler, ShowLastPage};
+use ipp_http::{DiscardDocuments, DocumentSink, IppHandler, ShowLastPage};
 use render::GrayImage;
-use ipp_printer::{Config, Printer};
+use ipp_printer::{Config, JobError, JobState, PendingJob, Printer};
 use log::{info, warn};
 use static_cell::StaticCell;
 
@@ -44,6 +47,81 @@ pub type SharedPrinter = Mutex<CriticalSectionRawMutex, RefCell<Printer<Selected
 /// Last page of the most recent job, for the display task. A newer page replaces one not
 /// yet shown.
 pub static PAGES: Signal<CriticalSectionRawMutex, GrayImage> = Signal::new();
+
+/// Identify-Printer requests, for the display task.
+pub static IDENTIFY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// What the status screen shows; set once the printer exists.
+struct NetInfo {
+    identity: &'static Identity,
+    printer: &'static SharedPrinter,
+}
+
+static NET_INFO: OnceLock<NetInfo> = OnceLock::new();
+/// Current IPv4 address (0 until DHCP completes).
+static IPV4: AtomicU32 = AtomicU32::new(0);
+
+/// Records the printer for [`status_lines`].
+pub fn publish(identity: &'static Identity, printer: &'static SharedPrinter) {
+    let _ = NET_INFO.init(NetInfo { identity, printer });
+}
+
+/// Text for the Identify-Printer status screen: (line, font scale).
+pub fn status_lines() -> Vec<(String, u32)> {
+    let mut lines = alloc::vec![("Inkprint".into(), 3)];
+    let Some(info) = NET_INFO.try_get() else {
+        lines.push(("No Wi-Fi configured".into(), 2));
+        return lines;
+    };
+    let ip = Ipv4Addr::from_bits(IPV4.load(Ordering::Relaxed));
+    lines.push((info.identity.instance.into(), 2));
+    lines.push((String::new(), 1));
+    if ip.is_unspecified() {
+        lines.push(("Connecting...".into(), 2));
+    } else {
+        lines.push(("Ready to print".into(), 2));
+    }
+    lines.push((format!("{}.local", info.identity.hostname), 2));
+    if !ip.is_unspecified() {
+        lines.push((format!("IP {ip}"), 2));
+    }
+    lines.push((String::new(), 1));
+    let now = uptime();
+    let last = info.printer.lock(|p| {
+        let p = p.borrow();
+        p.jobs()
+            .iter()
+            .filter(|j| j.state == JobState::Completed)
+            .max_by_key(|j| j.id)
+            .map(|j| (j.name.clone(), j.pages, j.completed.unwrap_or(now)))
+    });
+    match last {
+        Some((name, pages, at)) => {
+            let ago = match now.saturating_sub(at) / 60 {
+                0 => "just now".into(),
+                m if m < 120 => format!("{m} min ago"),
+                m => format!("{} h ago", m / 60),
+            };
+            lines.push((format!("Last job: {name}"), 2));
+            lines.push((format!("{pages} page{}, {ago}", if pages == 1 { "" } else { "s" }), 2));
+        }
+        None => lines.push(("No jobs yet".into(), 2)),
+    }
+    lines
+}
+
+/// Sends pages to the display task and Identify-Printer to [`IDENTIFY`].
+struct DisplaySink(ShowLastPage<fn(GrayImage)>);
+
+impl DocumentSink for DisplaySink {
+    async fn print<R: Read>(&self, job: &PendingJob, first: &[u8], rest: &mut R) -> Result<u32, JobError> {
+        self.0.print(job, first, rest).await
+    }
+
+    fn identify(&self) {
+        IDENTIFY.signal(());
+    }
+}
 
 /// Width bound for captured pages: A4 at 150 dpi (1240 px) is halved to 620, enough to
 /// crop margins and still fill the 600 px wide portrait canvas. Two pages of at most
@@ -84,6 +162,7 @@ impl Identity {
             uri: format!("ipp://{}.local:{IPP_PORT}/ipp/print", self.hostname),
             location: "Kitchen".into(),
             more_info: format!("http://{}.local:{IPP_PORT}/", self.hostname),
+            icon: Some(format!("http://{}.local:{IPP_PORT}{}", self.hostname, ipp_http::ICON_PATH)),
         }
     }
 }
@@ -141,6 +220,7 @@ pub async fn mdns_task(stack: Stack<'static>, identity: &'static Identity, txt: 
     loop {
         stack.wait_config_up().await;
         let Some(ipv4) = stack.config_v4().map(|c| c.address.address()) else { continue };
+        IPV4.store(ipv4.to_bits(), Ordering::Relaxed);
         let service = PrinterService {
             instance: identity.instance,
             hostname: identity.hostname,
@@ -166,6 +246,7 @@ pub async fn mdns_task(stack: Stack<'static>, identity: &'static Identity, txt: 
             }
         };
         select(respond, stack.wait_config_down()).await;
+        IPV4.store(0, Ordering::Relaxed);
         Timer::after(Duration::from_secs(1)).await;
     }
 }
@@ -182,7 +263,8 @@ pub async fn http_task(stack: Stack<'static>, printer: &'static SharedPrinter, d
     static SERVER: StaticCell<Server<HTTP_TASKS, 2048, 32>> = StaticCell::new();
     let tcp = Tcp::new(stack, TCP_BUFFERS.init(TcpBuffers::new()));
     let server = SERVER.init(Server::new());
-    let show = IppHandler::new(printer, ShowLastPage { max_width: CAPTURE_MAX_WIDTH, show: |page| PAGES.signal(page) }, uptime);
+    let to_display: fn(GrayImage) = |page| PAGES.signal(page);
+    let show = IppHandler::new(printer, DisplaySink(ShowLastPage { max_width: CAPTURE_MAX_WIDTH, show: to_display }), uptime);
     let discard = IppHandler::new(printer, DiscardDocuments, uptime);
     loop {
         match tcp.bind(SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), IPP_PORT)).await {

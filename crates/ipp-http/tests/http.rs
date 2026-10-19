@@ -243,3 +243,71 @@ fn bad_documents_are_rejected() {
     }
     assert!(shown.lock().unwrap().is_empty());
 }
+
+fn ipp_status(c: &mut Client, body: &[u8]) -> Message {
+    let msg = ipp(&c.post_ipp(body));
+    assert!(msg.code < 0x0100, "IPP status {:#06x}", msg.code);
+    msg
+}
+
+#[test]
+fn create_job_send_documents_and_close_with_empty_document() {
+    let (addr, shown) = showing_server();
+    let mut c = Client::connect(addr);
+    let created = ipp_status(&mut c, &request(Operation::CreateJob, 20, &[("job-name", Value::name("recipe"))]));
+    let id = created.group(DelimiterTag::Job).unwrap().get("job-id").unwrap().values[0].clone();
+
+    let mut body = request(
+        Operation::SendDocument,
+        21,
+        &[("job-id", id.clone()), ("last-document", Value::Boolean(false)), ("document-format", Value::mime("image/pwg-raster"))],
+    );
+    body.extend(b"RaS2");
+    body.extend(pwg_page(400, 300, 0x40));
+    ipp_status(&mut c, &body);
+
+    // CUPS ends multi-document jobs with an empty last document.
+    let done = ipp_status(&mut c, &request(Operation::SendDocument, 22, &[("job-id", id), ("last-document", Value::Boolean(true))]));
+    let job = done.group(DelimiterTag::Job).unwrap();
+    assert_eq!(job.get("job-state").unwrap().values[0], Value::Enum(9)); // completed
+    assert_eq!(job.get("job-impressions-completed").unwrap().values[0], Value::Integer(1));
+    assert_eq!(shown.lock().unwrap().len(), 1);
+}
+
+#[derive(Clone, Default)]
+struct CountIdentify(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+impl ipp_http::DocumentSink for CountIdentify {
+    async fn print<R: embedded_io_async::Read>(
+        &self,
+        _job: &ipp_printer::PendingJob,
+        _first: &[u8],
+        _rest: &mut R,
+    ) -> Result<u32, ipp_printer::JobError> {
+        Err(ipp_printer::JobError::Aborted)
+    }
+
+    fn identify(&self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn identify_printer_reaches_the_sink() {
+    let sink = CountIdentify::default();
+    let addr = common::start_server_with(sink.clone());
+    let mut c = Client::connect(addr);
+    ipp_status(&mut c, &request(Operation::IdentifyPrinter, 30, &[("identify-actions", Value::keyword("display"))]));
+    assert_eq!(sink.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[test]
+fn serves_the_icon() {
+    let addr = common::start_server();
+    let mut c = Client::connect(addr);
+    c.send(b"GET /icon.png HTTP/1.1\r\nHost: x\r\n\r\n");
+    let resp = c.response();
+    assert_eq!(resp.status, 200);
+    assert!(resp.headers.iter().any(|(k, v)| k == "content-type" && v == "image/png"));
+    assert!(resp.body.starts_with(b"\x89PNG\r\n\x1a\n"));
+}

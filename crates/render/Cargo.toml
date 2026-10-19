@@ -7,5 +7,6 @@ rust-version.workspace = true
 license.workspace      = true
 
 [dependencies]
-board  = { workspace = true }
-raster = { workspace = true }
+board             = { workspace = true }
+embedded-graphics = "0.8.2"
+raster            = { workspace = true }

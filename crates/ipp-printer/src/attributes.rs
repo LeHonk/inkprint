@@ -5,7 +5,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use board::{Board, Media};
-use ipp_codec::{Attribute, DelimiterTag, Group, StrTag, Value};
+use ipp_codec::{Attribute, DelimiterTag, Group, StrTag, Value, ValueTag};
 
 use crate::{Config, DOCUMENT_FORMATS, IMPLEMENTED_OPERATIONS};
 
@@ -47,7 +47,38 @@ fn urf_supported<B: Board>() -> Vec<String> {
     v
 }
 
-pub fn printer_attributes<B: Board>(config: &Config, now: u32, busy: bool, queued: usize) -> Group {
+/// Printer state that changes at run time.
+#[derive(Debug, Clone, Copy)]
+pub struct PrinterStatus {
+    /// Seconds since boot.
+    pub now: u32,
+    pub busy: bool,
+    pub queued: usize,
+    /// Uptime of the last printer-state change.
+    pub state_changed: u32,
+}
+
+/// `dateTime` (RFC 2579) for an uptime in seconds. There is no clock yet (no RTC or NTP),
+/// so times count from 1970-01-01T00:00:00Z at boot.
+fn date_time(uptime: u32) -> Value {
+    let days = uptime / 86_400;
+    let secs = uptime % 86_400;
+    // Days since the epoch → civil date (Howard Hinnant's algorithm).
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u8;
+    let month = (if mp < 10 { mp + 3 } else { mp - 9 }) as u8;
+    let year = (yoe + era * 400 + i64::from(month <= 2)) as u16;
+    let [y0, y1] = year.to_be_bytes();
+    Value::DateTime([y0, y1, month, day, (secs / 3600) as u8, (secs / 60 % 60) as u8, (secs % 60) as u8, 0, b'+', 0, 0])
+}
+
+pub fn printer_attributes<B: Board>(config: &Config, status: PrinterStatus) -> Group {
+    let PrinterStatus { now, busy, queued, state_changed } = status;
     let mut g = Group::new(DelimiterTag::Printer);
     let color = B::is_color();
 
@@ -61,14 +92,32 @@ pub fn printer_attributes<B: Board>(config: &Config, now: u32, busy: bool, queue
     g.push("uri-authentication-supported", keywords(&["none"]));
     g.push("printer-location", [Value::text(&config.location)]);
     g.push("printer-more-info", [Value::uri(&config.more_info)]);
+    if let Some(icon) = &config.icon {
+        g.push("printer-icons", [Value::uri(icon)]);
+    }
+    g.push("identify-actions-default", keywords(&["display"]));
+    g.push("identify-actions-supported", keywords(&["display"]));
     g.push("printer-state", [Value::Enum(if busy { PROCESSING } else { IDLE })]);
     g.push("printer-state-reasons", keywords(&["none"]));
     g.push("printer-is-accepting-jobs", [Value::Boolean(true)]);
     g.push("printer-up-time", [Value::Integer(now.max(1) as i32)]);
-    g.push("printer-config-change-time", [Value::Integer(1)]);
+    g.push("printer-current-time", [date_time(now)]);
+    g.push("printer-config-change-time", [Value::Integer(0)]);
+    g.push("printer-config-change-date-time", [date_time(0)]);
+    g.push("printer-state-change-time", [Value::Integer(state_changed as i32)]);
+    g.push("printer-state-change-date-time", [date_time(state_changed)]);
     g.push("queued-job-count", [Value::Integer(queued as i32)]);
     g.push("printer-kind", keywords(&["document"]));
-    // TODO: printer-icons (serve a PNG over HTTP; macOS wants it), printer-device-id.
+    g.push("printer-device-id", [Value::text(&format!("MFG:Soldered;MDL:{};CMD:PWGRaster,URF;", B::MODEL))]);
+    g.push("printer-geo-location", [Value::OutOfBand(ValueTag::Unknown as u8)]);
+    g.push("printer-organization", [Value::text("")]);
+    g.push("printer-organizational-unit", [Value::text("")]);
+    // No consumables; one "supply" keeps clients that expect the attribute happy.
+    g.push("printer-supply", [Value::Other(ValueTag::OctetString as u8, b"index=1;class=supplyThatIsConsumed;type=other;unit=percent;maxcapacity=100;level=100;".to_vec())]);
+    g.push("printer-supply-description", [Value::text("E-paper panel")]);
+    g.push("printer-supply-info-uri", [Value::uri(&config.more_info)]);
+    // A full refresh takes a few seconds.
+    g.push("pages-per-minute", [Value::Integer(10)]);
 
     // Protocol.
     g.push("ipp-versions-supported", keywords(&["1.1", "2.0"]));
@@ -84,6 +133,15 @@ pub fn printer_attributes<B: Board>(config: &Config, now: u32, busy: bool, queue
     g.push("compression-supported", keywords(&["none"]));
     g.push("pdl-override-supported", keywords(&["attempted"]));
     g.push("multiple-document-jobs-supported", [Value::Boolean(false)]);
+    g.push("multiple-operation-time-out", [Value::Integer(crate::MULTIPLE_OPERATION_TIMEOUT as i32)]);
+    g.push("multiple-operation-time-out-action", keywords(&["abort-job"]));
+    g.push("which-jobs-supported", keywords(&["completed", "not-completed"]));
+    g.push("job-ids-supported", [Value::Boolean(true)]);
+    g.push("preferred-attributes-supported", [Value::Boolean(false)]);
+    // Every format gets the same attributes, so the filter is accepted and ignored.
+    g.push("printer-get-attributes-supported", keywords(&["document-format"]));
+    // Overrides are accepted and ignored: there is nothing to vary per page on a display.
+    g.push("overrides-supported", keywords(&["document-number", "pages"]));
     g.push("job-creation-attributes-supported", keywords(&["copies", "media", "media-col", "print-color-mode", "print-quality", "printer-resolution", "sides"]));
 
     // Document formats.
@@ -119,6 +177,7 @@ pub fn printer_attributes<B: Board>(config: &Config, now: u32, busy: bool, queue
         g.push(margin, [Value::Integer(0)]);
     }
     g.push("media-type-supported", keywords(&["stationery"]));
+    g.push("media-source-supported", keywords(&["main"]));
 
     // Job template.
     g.push("copies-default", [Value::Integer(1)]);
@@ -127,6 +186,10 @@ pub fn printer_attributes<B: Board>(config: &Config, now: u32, busy: bool, queue
     g.push("sides-supported", keywords(&["one-sided"]));
     g.push("print-color-mode-default", keywords(&[if color { "color" } else { "monochrome" }]));
     g.push("print-color-mode-supported", keywords(if color { &["auto", "monochrome", "color"] } else { &["auto", "monochrome"] }));
+    g.push("print-content-optimize-default", keywords(&["auto"]));
+    g.push("print-content-optimize-supported", keywords(&["auto"]));
+    g.push("print-rendering-intent-default", keywords(&["auto"]));
+    g.push("print-rendering-intent-supported", keywords(&["auto"]));
     g.push("print-quality-default", [Value::Enum(4)]);
     g.push("print-quality-supported", [Value::Enum(4)]);
     g.push("print-scaling-default", keywords(&["fit"]));
@@ -166,4 +229,17 @@ pub fn mdns_txt_records<B: Board>(config: &Config) -> Vec<(&'static str, String)
         ("note", config.location.clone()),
         ("adminurl", config.more_info.clone()),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn date_time_from_uptime() {
+        assert_eq!(date_time(0), Value::DateTime([0x07, 0xB2, 1, 1, 0, 0, 0, 0, b'+', 0, 0]));
+        // 1972-03-01 is after a leap day: 2 × 365 + 31 + 29 days.
+        let t = (2 * 365 + 31 + 29) * 86_400 + 3_661;
+        assert_eq!(date_time(t), Value::DateTime([0x07, 0xB4, 3, 1, 1, 1, 1, 0, b'+', 0, 0]));
+    }
 }

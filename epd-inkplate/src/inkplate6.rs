@@ -189,6 +189,20 @@ where
         self.ext.is_some()
     }
 
+    /// One `burnInClean` cycle, to remove ghosts of saturated content before the next
+    /// [`EpdDriver::show`]. It ends on whitening, so follow it with a refresh.
+    ///
+    /// Upstream leaves the rails on afterwards and asks for at least 5 s between cycles;
+    /// this runs a single cycle and powers down, so an unexpected stop never leaves the
+    /// high-voltage rails on.
+    pub fn burn_in_clean(&mut self) -> Result<(), Error<I2C::Error>> {
+        self.eink_on()?;
+        for (kind, rep) in luts::BURN_IN_SEQUENCE {
+            self.clean(kind, rep)?;
+        }
+        self.eink_off()
+    }
+
     /// Panel temperature in °C from the PMIC (`readTemperature`).
     pub fn temperature(&mut self) -> Result<i8, Error<I2C::Error>> {
         let wake = !self.on;

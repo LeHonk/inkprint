@@ -19,6 +19,7 @@ pub fn config(port: u16) -> Config {
         uri: format!("ipp://localhost:{port}/ipp/print"),
         location: "Test kitchen".into(),
         more_info: format!("http://localhost:{port}/"),
+        icon: Some(format!("http://localhost:{port}{}", ipp_http::ICON_PATH)),
     }
 }
 

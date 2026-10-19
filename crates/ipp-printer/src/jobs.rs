@@ -32,10 +32,27 @@ impl JobState {
 pub struct JobRecord {
     pub id: u32,
     pub name: String,
+    /// `requesting-user-name` of the creating request (unauthenticated, informational).
+    pub user: String,
+    /// Change with [`JobRecord::set_state`] so the timestamps stay right.
     pub state: JobState,
     pub pages: u32,
     /// Seconds since boot.
     pub created: u32,
+    pub processing: Option<u32>,
+    pub completed: Option<u32>,
+}
+
+impl JobRecord {
+    pub fn set_state(&mut self, state: JobState, now: u32) {
+        self.state = state;
+        if state == JobState::Processing && self.processing.is_none() {
+            self.processing = Some(now);
+        }
+        if state.is_terminal() {
+            self.completed = Some(now);
+        }
+    }
 }
 
 /// The most recent jobs, oldest dropped first.
@@ -65,6 +82,10 @@ impl JobTable {
         if let Some(job) = self.jobs.iter_mut().find(|j| j.id == id) {
             f(job);
         }
+    }
+
+    pub fn update_all(&mut self, f: impl FnMut(&mut JobRecord)) {
+        self.jobs.iter_mut().for_each(f);
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &JobRecord> {

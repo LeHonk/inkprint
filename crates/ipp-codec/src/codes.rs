@@ -106,6 +106,7 @@ code_enum! {
         SuccessfulOk = 0x0000,
         SuccessfulOkIgnoredOrSubstitutedAttributes = 0x0001,
         ClientErrorBadRequest = 0x0400,
+        ClientErrorNotPossible = 0x0404,
         ClientErrorNotFound = 0x0406,
         ClientErrorDocumentFormatNotSupported = 0x040a,
         ClientErrorAttributesOrValuesNotSupported = 0x040b,

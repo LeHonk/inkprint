@@ -40,6 +40,10 @@ pub const CLEAN_FILL: [u8; 4] = [0b1010_1010, 0b0101_0101, 0b0000_0000, 0b1111_1
 pub const CLEAN_SEQUENCE: [(u8, u8); 9] =
     [(0, 1), (1, 18), (2, 1), (0, 18), (2, 1), (1, 18), (2, 1), (0, 18), (2, 1)];
 
+/// One cycle of upstream's `burnInClean`: a stronger clean for ghosts of saturated
+/// black-on-white content.
+pub const BURN_IN_SEQUENCE: [(u8, u8); 8] = [(1, 21), (2, 1), (0, 12), (2, 1), (1, 21), (2, 1), (0, 12), (2, 1)];
+
 /// Per-phase lookup tables for a 4-bit packed gray frame byte (two pixels, even pixel in
 /// the high nibble), as `GLUT`/`GLUT2` in the Arduino driver: `low[phase][byte]` gives the
 /// two pixels' codes in bits 0–3, `high` the same shifted into bits 4–7.
