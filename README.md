@@ -14,6 +14,7 @@ Print a recipe from your phone and the panel keeps showing the last page. See
 | `crates/raster` | Streaming PWG Raster / URF decoder | host + device |
 | `crates/render` | Last-page capture, auto-crop, fit, rotate, quantize | host + device |
 | `crates/ipp-http` | IPP over HTTP: edge-http handler for the printer | host + device |
+| `crates/setup` | Settings in flash, setup form, captive portal and `/setup` router | host + device |
 | `crates/dnssd` | DNS-SD records (`_ipp._tcp`, `_print`/`_universal` subtypes) for edge-mdns | host + device |
 | `epd-inkplate` | Inkplate 6 / 6 V2 panel driver, PMIC, IO expanders (ported, LGPL-3.0) | host + device |
 | `sim` | Host simulator: the printer over hyper, writes `last-page.png` | host |
@@ -40,13 +41,34 @@ uses (edge-http), which is handy for `ipptool` runs against the device code path
 
 ## Device
 
-Wi-Fi credentials are compiled in from the environment. Put them in the git-ignored
-`firmware/.env` and source it before building:
+### Wi-Fi setup
+
+On first boot the Inkplate has no Wi-Fi settings. It opens its own network,
+`Inkprint-xxxx`, and shows instructions on the panel. Join it with a phone; the setup
+page pops up (or browse to `http://192.168.4.1/setup`). Pick your network, enter its
+password and the printer's location (shown in print dialogs), and save. The printer
+restarts and joins your network.
+
+- Settings are kept in flash (the `nvs` partition) across restarts and firmware updates.
+- To change them later, open `http://inkplate-xxxx.local:631/setup` on your network.
+  Leave the password empty to keep the current one, e.g. to change only the location.
+- If the saved network can't be joined for 3 minutes (new router, changed password),
+  the printer restarts into setup mode without touching the panel, so the page on it
+  stays. After 10 minutes without changes it tries the saved network again.
+- To forget the settings: `espflash erase-region 0x9000 0x6000` (the `nvs` partition).
+
+The setup network is open and the setup page has no password: anyone within Wi-Fi range
+during setup mode, or on your network, can change the settings.
+
+For development, credentials can also be compiled in. They are only used when flash
+holds no settings. Put them in the git-ignored `firmware/.env`:
 
 ```bash
 export WIFI_SSID='my network'
 export WIFI_PASSWORD='secret'      # empty for an open network
 ```
+
+### Building and flashing
 
 ```bash
 source ~/export-esp.sh

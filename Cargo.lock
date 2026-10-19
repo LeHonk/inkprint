@@ -372,6 +372,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-storage"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c815b3ed4213d85d6cfd274b871f430c0681084e28dfd4a537877f47f844ec83"
+
+[[package]]
 name = "epd-inkplate"
 version = "0.1.0"
 dependencies = [
@@ -855,6 +861,20 @@ dependencies = [
  "libc",
  "linux-raw-sys",
  "windows-sys",
+]
+
+[[package]]
+name = "setup"
+version = "0.1.0"
+dependencies = [
+ "async-io",
+ "edge-http",
+ "edge-nal",
+ "edge-nal-std",
+ "embassy-time",
+ "embedded-io-async",
+ "embedded-storage",
+ "log",
 ]
 
 [[package]]

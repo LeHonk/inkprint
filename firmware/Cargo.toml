@@ -56,6 +56,9 @@ esp-println = { version = "0.18.0", features = ["esp32", "log-04"] }
 edge-http        = { version = "0.8.0", default-features = false, features = ["io", "log"] }
 edge-mdns        = { version = "0.8.0", default-features = false, features = ["io", "log"] }
 edge-nal         = "0.7.0"
+# Setup portal: DHCP server and captive DNS on the access point.
+edge-captive     = { version = "0.8.0", default-features = false, features = ["io", "log"] }
+edge-dhcp        = { version = "0.8.0", default-features = false, features = ["io", "log"] }
 edge-nal-embassy = { version = "0.9.0", default-features = false, features = ["dhcpv4", "dhcpv4-hostname", "log", "medium-ethernet", "multicast", "proto-ipv4", "tcp", "udp"] }
 embassy-executor = { version = "0.10.0", features = ["log"] }
 embassy-time = { version = "0.5.0", features = ["log"] }
@@ -81,6 +84,9 @@ smoltcp = { version = "0.14.0", default-features = false, features = [
 ] }
 
 critical-section = "1.2.0"
+# Settings in the nvs partition.
+embedded-storage = "0.3.2"
+esp-storage      = { version = "0.10.0", features = ["embedded-storage", "esp32"] }
 embassy-futures  = "0.1.2"
 embassy-sync     = "0.8.0"
 heapless         = { version = "0.9", default-features = false }
@@ -96,6 +102,7 @@ ipp-http     = { path = "../crates/ipp-http" }
 ipp-printer  = { path = "../crates/ipp-printer" }
 raster       = { path = "../crates/raster" }
 render       = { path = "../crates/render" }
+setup        = { path = "../crates/setup" }
 static_cell      = "2.1.1"
 
 

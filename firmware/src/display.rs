@@ -4,7 +4,7 @@
 use alloc::vec::Vec;
 
 use board::{Board, PixelKind, Selected};
-use embassy_futures::select::{Either, select};
+use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_time::{Duration, Instant, Timer};
 use epd_inkplate::inkplate6::Inkplate6Panel;
 use epd_inkplate::{EpdDriver, Frame};
@@ -14,7 +14,7 @@ use esp_hal::i2c::master::I2c;
 use log::{info, warn};
 use render::GrayImage;
 
-use crate::net::{IDENTIFY, PAGES, status_lines};
+use crate::net::{IDENTIFY, PAGES, TEXT, status_lines};
 use crate::panel_bus::I2sPanelBus;
 
 pub type Panel = Inkplate6Panel<Selected, I2sPanelBus, I2c<'static, Blocking>, Delay>;
@@ -58,17 +58,27 @@ fn burn_in_clean(panel: &mut Panel) {
     }
 }
 
+fn text_screen(lines: &[(alloc::string::String, u32)]) -> Vec<u8> {
+    let text: Vec<render::Line<'_>> = lines.iter().map(|(text, scale)| render::Line { text, scale: *scale }).collect();
+    let (w, h) = Selected::logical_size();
+    panel_data(&render::text_screen(w as u32, h as u32, &text), false)
+}
+
 #[embassy_executor::task]
 pub async fn display_task(mut panel: Panel) {
     // The last page shown, to restore after the status screen. Before the first job the
     // panel shows whatever it showed before boot, which cannot be restored.
     let mut current: Option<Vec<u8>> = None;
-    // The status screen's saturated black text survives a normal refresh as a ghost, so
-    // whatever replaces it gets a burn-in clean first.
+    // Text screens' saturated black survives a normal refresh as a ghost, so whatever
+    // replaces them gets a burn-in clean first.
     let mut status_shown = false;
     loop {
-        match select(PAGES.wait(), IDENTIFY.wait()).await {
-            Either::First(mut page) => {
+        match select3(PAGES.wait(), IDENTIFY.wait(), TEXT.wait()).await {
+            Either3::Third(lines) => {
+                show(&mut panel, &text_screen(&lines), "message");
+                status_shown = true;
+            }
+            Either3::First(mut page) => {
                 Timer::after(SETTLE).await;
                 // Another job finished meanwhile: only its page matters.
                 if let Some(newer) = PAGES.try_take() {
@@ -82,15 +92,9 @@ pub async fn display_task(mut panel: Panel) {
                 show(&mut panel, &data, "page");
                 current = Some(data);
             }
-            Either::Second(()) => {
+            Either3::Second(()) => {
                 Timer::after(SETTLE).await;
-                let lines = status_lines();
-                let text: Vec<render::Line<'_>> =
-                    lines.iter().map(|(text, scale)| render::Line { text, scale: *scale }).collect();
-                let (w, h) = Selected::logical_size();
-                let screen = render::text_screen(w as u32, h as u32, &text);
-                show(&mut panel, &panel_data(&screen, false), "status screen");
-                drop(screen);
+                show(&mut panel, &text_screen(&status_lines()), "status screen");
                 status_shown = true;
 
                 match select(PAGES.wait(), Timer::after(IDENTIFY_FOR)).await {

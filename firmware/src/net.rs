@@ -1,7 +1,7 @@
-//! Wi-Fi station, embassy-net with DHCP, mDNS/DNS-SD advertisement and the IPP server.
+//! Wi-Fi station, embassy-net with DHCP, mDNS/DNS-SD advertisement and the IPP server,
+//! with the settings form at `/setup` next to it.
 //!
-//! Wi-Fi credentials are compiled in from `WIFI_SSID` / `WIFI_PASSWORD` (put them in the
-//! git-ignored `firmware/.env`, see README).
+//! Settings come from flash (see [`crate::device`]); setup mode is in [`crate::portal`].
 
 use alloc::format;
 use alloc::string::String;
@@ -31,6 +31,9 @@ use esp_radio::wifi::{AuthenticationMethodConfig, Config as WifiConfig, Interfac
 use ipp_http::{DiscardDocuments, DocumentSink, IppHandler, ShowLastPage};
 use render::GrayImage;
 use ipp_printer::{Config, JobError, JobState, PendingJob, Printer};
+use setup::portal::{SetupHandler, WithSetup};
+
+use crate::device::{self, DeviceSetup};
 use log::{info, warn};
 use static_cell::StaticCell;
 
@@ -50,6 +53,9 @@ pub static PAGES: Signal<CriticalSectionRawMutex, GrayImage> = Signal::new();
 
 /// Identify-Printer requests, for the display task.
 pub static IDENTIFY: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// A full-screen text message for the display task: (line, font scale).
+pub static TEXT: Signal<CriticalSectionRawMutex, Vec<(String, u32)>> = Signal::new();
 
 /// What the status screen shows; set once the printer exists.
 struct NetInfo {
@@ -128,9 +134,18 @@ impl DocumentSink for DisplaySink {
 /// 900 × 1270 px (about 1.1 MB each) live in PSRAM at a time.
 const CAPTURE_MAX_WIDTH: u32 = 900;
 
-/// Compile-time Wi-Fi credentials, if set.
-pub fn credentials() -> Option<(&'static str, &'static str)> {
-    Some((option_env!("WIFI_SSID")?, option_env!("WIFI_PASSWORD").unwrap_or("")))
+/// Without an address for this long, restart into setup mode (a changed router or
+/// password); setup mode returns to normal after its own timeout.
+const SETUP_AFTER: Duration = Duration::from_secs(180);
+
+/// Development fallback when flash holds no settings: `WIFI_SSID` / `WIFI_PASSWORD` at
+/// build time (see README).
+pub fn compiled_in_settings() -> Option<setup::Settings> {
+    Some(setup::Settings {
+        ssid: option_env!("WIFI_SSID")?.into(),
+        password: option_env!("WIFI_PASSWORD").unwrap_or("").into(),
+        ..Default::default()
+    })
 }
 
 /// Per-device names, derived from the station MAC address so several Inkplates can share
@@ -141,6 +156,8 @@ pub struct Identity {
     /// Printer and DNS-SD instance name, e.g. "Inkplate 6 (a1b2)".
     pub instance: &'static str,
     pub uuid: &'static str,
+    /// Network name of the setup access point, e.g. "Inkprint-a1b2".
+    pub ap_ssid: &'static str,
 }
 
 impl Identity {
@@ -152,27 +169,48 @@ impl Identity {
             instance: format!("{} ({suffix})", Selected::MODEL).leak(),
             // Fixed namespace + MAC: stable across reboots and firmware updates.
             uuid: format!("urn:uuid:6c1f3f5e-1d9a-4c1e-9a52-{mac_hex}").leak(),
+            ap_ssid: format!("Inkprint-{suffix}").leak(),
         }
     }
 
-    pub fn printer_config(&self) -> Config {
+    pub fn printer_config(&self, location: &str) -> Config {
         Config {
             name: self.instance.into(),
             uuid: self.uuid.into(),
             uri: format!("ipp://{}.local:{IPP_PORT}/ipp/print", self.hostname),
-            location: "Kitchen".into(),
+            location: location.into(),
             more_info: format!("http://{}.local:{IPP_PORT}/", self.hostname),
             icon: Some(format!("http://{}.local:{IPP_PORT}{}", self.hostname, ipp_http::ICON_PATH)),
         }
     }
 }
 
-/// Creates the network stack on the Wi-Fi station interface, with DHCP sending our hostname.
-pub fn stack(interface: Interface, identity: &Identity, seed: u64) -> (Stack<'static>, Runner<'static, Interface>) {
+/// Creates the network stack on a Wi-Fi interface (station or access point).
+pub fn stack(interface: Interface, config: embassy_net::Config, seed: u64) -> (Stack<'static>, Runner<'static, Interface>) {
     static RESOURCES: StaticCell<StackResources<SOCKETS>> = StaticCell::new();
+    embassy_net::new(interface, config, RESOURCES.init(StackResources::new()), seed)
+}
+
+/// DHCP client config that sends our hostname.
+pub fn dhcp_config(identity: &Identity) -> embassy_net::Config {
     let mut dhcp = DhcpConfig::default();
     dhcp.hostname = heapless::String::try_from(identity.hostname).ok();
-    embassy_net::new(interface, embassy_net::Config::dhcpv4(dhcp), RESOURCES.init(StackResources::new()), seed)
+    embassy_net::Config::dhcpv4(dhcp)
+}
+
+/// Restarts into setup mode when the station has had no address for [`SETUP_AFTER`].
+#[embassy_executor::task]
+pub async fn connectivity_watchdog(stack: Stack<'static>) {
+    let mut last_up = Instant::now();
+    loop {
+        Timer::after(Duration::from_secs(5)).await;
+        if stack.config_v4().is_some() {
+            last_up = Instant::now();
+        } else if last_up.elapsed() > SETUP_AFTER {
+            warn!("Wi-Fi: no connection for {} s, restarting into setup mode", SETUP_AFTER.as_secs());
+            device::restart_into_setup();
+        }
+    }
 }
 
 /// Keeps the station connected, retrying every 5 s.
@@ -255,17 +293,22 @@ fn uptime() -> u32 {
     Instant::now().as_secs() as u32
 }
 
-/// Serves IPP on port 631. With `display`, job pages go to [`PAGES`]; without (no panel
-/// driver for this board, or panel init failed) documents are discarded and jobs abort.
+/// Serves IPP on port 631, and the settings form at `/setup`. With `display`, job pages
+/// go to [`PAGES`]; without (no panel driver for this board, or panel init failed)
+/// documents are discarded and jobs abort.
 #[embassy_executor::task]
-pub async fn http_task(stack: Stack<'static>, printer: &'static SharedPrinter, display: bool) {
+pub async fn http_task(stack: Stack<'static>, printer: &'static SharedPrinter, identity: &'static Identity, display: bool) {
     static TCP_BUFFERS: StaticCell<TcpBuffers<HTTP_TASKS, 1536, 2048>> = StaticCell::new();
     static SERVER: StaticCell<Server<HTTP_TASKS, 2048, 32>> = StaticCell::new();
     let tcp = Tcp::new(stack, TCP_BUFFERS.init(TcpBuffers::new()));
     let server = SERVER.init(Server::new());
     let to_display: fn(GrayImage) = |page| PAGES.signal(page);
-    let show = IppHandler::new(printer, DisplaySink(ShowLastPage { max_width: CAPTURE_MAX_WIDTH, show: to_display }), uptime);
-    let discard = IppHandler::new(printer, DiscardDocuments, uptime);
+    let lan_setup = || SetupHandler::lan(DeviceSetup { name: identity.instance, networks: &[] });
+    let show = WithSetup {
+        setup: lan_setup(),
+        other: IppHandler::new(printer, DisplaySink(ShowLastPage { max_width: CAPTURE_MAX_WIDTH, show: to_display }), uptime),
+    };
+    let discard = WithSetup { setup: lan_setup(), other: IppHandler::new(printer, DiscardDocuments, uptime) };
     loop {
         match tcp.bind(SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), IPP_PORT)).await {
             Ok(acceptor) => {

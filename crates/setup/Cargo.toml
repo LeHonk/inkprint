@@ -1,0 +1,20 @@
+[package]
+name         = "setup"
+description  = "Device settings in flash and the Wi-Fi setup portal (captive portal and LAN form)"
+edition.workspace      = true
+version.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+
+[dependencies]
+edge-http         = { version = "0.8.0", default-features = false, features = ["io"] }
+edge-nal          = "0.7.0"
+embedded-io-async = "0.7.0"
+embedded-storage  = "0.3.2"
+log               = { workspace = true }
+
+[dev-dependencies]
+async-io     = "2.6.0"
+edge-nal-std = "0.7.0"
+# Time driver for edge-nal's timeouts on the host.
+embassy-time = { version = "0.5.1", features = ["generic-queue-8", "std"] }
