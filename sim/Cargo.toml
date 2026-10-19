@@ -1,0 +1,30 @@
+[package]
+name         = "sim"
+description  = "Host simulator: the printer logic over hyper, rendering pages to PNG"
+edition.workspace      = true
+version.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+publish      = false
+
+[features]
+default        = ["inkplate6"]
+inkplate6      = ["board/inkplate6"]
+inkplate6v2    = ["board/inkplate6v2"]
+inkplate6plus  = ["board/inkplate6plus"]
+inkplate10     = ["board/inkplate10"]
+inkplate5      = ["board/inkplate5"]
+inkplate6color = ["board/inkplate6color"]
+
+[dependencies]
+board       = { workspace = true }
+ipp-codec   = { workspace = true }
+ipp-printer = { workspace = true }
+raster      = { workspace = true }
+render      = { workspace = true }
+
+http-body-util = "0.1.5"
+hyper          = { version = "1.12.0", features = ["http1", "server"] }
+hyper-util     = { version = "0.1.21", features = ["tokio"] }
+image          = { version = "0.25.10", default-features = false, features = ["png"] }
+tokio          = { version = "1.54.0", features = ["macros", "net", "rt-multi-thread"] }

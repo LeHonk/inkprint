@@ -1,0 +1,11 @@
+[package]
+name         = "render"
+description  = "Page capture, auto-crop, scaling, rotation and quantization for e-ink panels"
+edition.workspace      = true
+version.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+
+[dependencies]
+board  = { workspace = true }
+raster = { workspace = true }

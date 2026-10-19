@@ -1,0 +1,18 @@
+[package]
+name         = "board"
+description  = "Compile-time capabilities of the supported Inkplate variants"
+edition.workspace      = true
+version.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+
+# Exactly one board feature must be enabled. Binaries (firmware, sim) pick it;
+# libraries depend on `board` with default-features = false.
+[features]
+default        = ["inkplate6"]
+inkplate6      = []
+inkplate6v2    = []
+inkplate6plus  = []
+inkplate10     = []
+inkplate5      = []
+inkplate6color = []

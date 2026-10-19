@@ -1,0 +1,12 @@
+[package]
+name         = "ipp-printer"
+description  = "Sans-IO IPP Everywhere printer: operations, job table, attribute catalog"
+edition.workspace      = true
+version.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+
+[dependencies]
+board     = { workspace = true }
+ipp-codec = { workspace = true }
+raster    = { workspace = true }

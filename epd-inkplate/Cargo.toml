@@ -1,0 +1,11 @@
+[package]
+name         = "epd-inkplate"
+description  = "Inkplate e-paper drivers on embedded-hal traits (parallel EPD + PMIC, SPI color)"
+edition.workspace      = true
+version.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+
+[dependencies]
+board        = { workspace = true }
+embedded-hal = { workspace = true }

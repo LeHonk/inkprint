@@ -1,0 +1,24 @@
+# Host-buildable workspace: protocol, raster, render and driver crates plus the simulator.
+# The ESP32 firmware lives in `firmware/` with its own toolchain (channel "esp") and target,
+# so it is excluded here and depends on these crates by path.
+[workspace]
+resolver = "3"
+members  = ["crates/*", "epd-inkplate", "sim"]
+exclude  = ["firmware"]
+
+[workspace.package]
+edition      = "2024"
+version      = "0.1.0"
+rust-version = "1.95"
+license      = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+board        = { path = "crates/board", default-features = false }
+ipp-codec    = { path = "crates/ipp-codec" }
+ipp-printer  = { path = "crates/ipp-printer" }
+raster       = { path = "crates/raster" }
+render       = { path = "crates/render" }
+epd-inkplate = { path = "epd-inkplate" }
+
+embedded-hal = "1.0.0"
+log          = "0.4.27"

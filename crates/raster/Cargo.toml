@@ -1,0 +1,9 @@
+[package]
+name         = "raster"
+description  = "Push-based streaming decoders for PWG Raster and Apple URF"
+edition.workspace      = true
+version.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+
+[dependencies]

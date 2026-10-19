@@ -1,0 +1,9 @@
+[package]
+name         = "ipp-codec"
+description  = "no_std IPP/1.1-2.0 message parser and encoder (RFC 8010)"
+edition.workspace      = true
+version.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+
+[dependencies]
