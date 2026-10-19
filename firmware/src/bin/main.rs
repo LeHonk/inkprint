@@ -12,15 +12,18 @@ use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::clock::CpuClock;
 use esp_hal::timer::timg::TimerGroup;
-use log::info;
+use log::{info, warn};
 
 use board::{Board, Selected};
-use ipp_printer::{Config, Printer};
+use core::cell::RefCell;
+use embassy_sync::blocking_mutex::Mutex;
+use inkprint_firmware::net::{self, Identity, SharedPrinter};
+use ipp_printer::Printer;
+use static_cell::StaticCell;
 #[cfg(any(feature = "inkplate6", feature = "inkplate6v2"))]
 use {
     epd_inkplate::inkplate6::Inkplate6Panel,
     esp_hal::delay::Delay,
-    log::warn,
     esp_hal::gpio::Pin,
     esp_hal::i2c::master::{Config as I2cConfig, I2c},
     inkprint_firmware::panel_bus::{I2sPanelBus, PanelPins},
@@ -119,40 +122,51 @@ async fn main(spawner: Spawner) -> ! {
         }
     }
 
-    let _wifi_controller =
-        esp_radio::wifi::WifiController::new(peripherals.WIFI, Default::default())
-            .expect("Failed to initialize Wi-Fi controller");
-    let _wifi_interface = esp_radio::wifi::Interface::station();
-
     let (width, height) = Selected::logical_size();
     info!("{}: {}x{} portrait canvas", Selected::MODEL, width, height);
 
-    let _printer: Printer<Selected> = Printer::new(Config {
-        name: "Inkplate".into(),
-        // TODO: derive from the eFuse MAC so each device has a stable, unique UUID.
-        uuid: "urn:uuid:6c1f3f5e-1d9a-4c1e-9a52-000000000001".into(),
-        // TODO: fill in the DHCP address / mDNS hostname once the network is up.
-        uri: "ipp://inkplate.local:631/ipp/print".into(),
-        location: "Kitchen".into(),
-        more_info: "http://inkplate.local/".into(),
-    });
-
-    // TODO (milestones 2, 5, 6 in PLAN.md):
-    // - display: implement epd_inkplate::ParallelBus with direct GPIO register writes,
-    //   bring up the IO expander + TPS65186 and show a test pattern. Never clear at boot.
-    // - wifi: connect using option_env!("WIFI_SSID") / option_env!("WIFI_PASSWORD"),
-    //   run an embassy-net stack with DHCP.
-    // - mdns: edge-mdns responder for _ipp._tcp (+ _print, _universal subtypes) with
-    //   ipp_printer::mdns_txt_records::<Selected>().
-    // - ipp: edge-http server on :631 POST /ipp/print -> Message::parse ->
-    //   Printer::handle -> raster::Decoder -> render::PageCapture -> display task.
-    let _ = spawner;
+    match net::credentials() {
+        Some((ssid, password)) => start_network(spawner, peripherals.WIFI, ssid, password).await,
+        None => warn!("no Wi-Fi credentials compiled in: set WIFI_SSID and WIFI_PASSWORD (see README)"),
+    }
 
     loop {
         Timer::after(Duration::from_secs(60)).await;
     }
+}
 
-    // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.2.2/examples
+/// Brings up Wi-Fi and DHCP, then starts mDNS and the IPP server.
+#[allow(clippy::large_stack_frames, reason = "runs once at boot on main's stack, like main")]
+async fn start_network(spawner: Spawner, wifi: esp_hal::peripherals::WIFI<'static>, ssid: &'static str, password: &'static str) {
+    static IDENTITY: StaticCell<Identity> = StaticCell::new();
+    static PRINTER: StaticCell<SharedPrinter> = StaticCell::new();
+
+    let controller = match esp_radio::wifi::WifiController::new(wifi, Default::default()) {
+        Ok(c) => c,
+        Err(e) => {
+            warn!("Wi-Fi init failed: {e:?}");
+            return;
+        }
+    };
+    let interface = esp_radio::wifi::Interface::station();
+    let identity: &'static Identity = IDENTITY.init(Identity::from_mac(interface.mac_address()));
+    let config = identity.printer_config();
+    let txt = net::txt_records(&config);
+    let printer: &'static SharedPrinter = PRINTER.init(Mutex::new(RefCell::new(Printer::new(config))));
+
+    let rng = esp_hal::rng::Rng::new();
+    let seed = (rng.random() as u64) << 32 | rng.random() as u64;
+    let (stack, runner) = net::stack(interface, identity, seed);
+
+    spawner.spawn(net::wifi_task(controller, ssid, password).expect("spawn wifi"));
+    spawner.spawn(net::net_task(runner).expect("spawn net"));
+
+    stack.wait_config_up().await;
+    if let Some(cfg) = stack.config_v4() {
+        info!("IP address {} — printer at ipp://{}.local:{}/ipp/print", cfg.address, identity.hostname, net::IPP_PORT);
+    }
+    spawner.spawn(net::mdns_task(stack, identity, txt).expect("spawn mdns"));
+    spawner.spawn(net::http_task(stack, printer).expect("spawn http"));
 }
 
 /// Gray ramp in 8 bands across the native panel width (black at native x = 0), with a

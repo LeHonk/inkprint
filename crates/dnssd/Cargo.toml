@@ -1,0 +1,10 @@
+[package]
+name         = "dnssd"
+description  = "DNS-SD records advertising the printer over mDNS (edge-mdns answers)"
+edition.workspace      = true
+version.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+
+[dependencies]
+edge-mdns = { version = "0.8.0", default-features = false }

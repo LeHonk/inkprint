@@ -36,8 +36,10 @@ log                    = "0.4.27"
 
 embassy-net = { version = "0.9.1", features = [
   "dhcpv4",
+  "dhcpv4-hostname",
   "log",
   "medium-ethernet",
+  "multicast",
   "tcp",
   "udp",
 ] }
@@ -50,7 +52,11 @@ esp-backtrace = { version = "0.20.0", features = [
   "println",
 ] }
 esp-println = { version = "0.18.0", features = ["esp32", "log-04"] }
-# for more networking protocol support see https://crates.io/crates/edge-net
+# HTTP server and mDNS responder on embassy-net (https://crates.io/crates/edge-net).
+edge-http        = { version = "0.8.0", default-features = false, features = ["io", "log"] }
+edge-mdns        = { version = "0.8.0", default-features = false, features = ["io", "log"] }
+edge-nal         = "0.7.0"
+edge-nal-embassy = { version = "0.9.0", default-features = false, features = ["dhcpv4", "dhcpv4-hostname", "log", "medium-ethernet", "multicast", "proto-ipv4", "tcp", "udp"] }
 embassy-executor = { version = "0.10.0", features = ["log"] }
 embassy-time = { version = "0.5.0", features = ["log"] }
 esp-radio = { version = "1.0.0-beta.1", features = [
@@ -75,13 +81,18 @@ smoltcp = { version = "0.14.0", default-features = false, features = [
 ] }
 
 critical-section = "1.2.0"
+embassy-futures  = "0.1.2"
+embassy-sync     = "0.8.0"
+heapless         = { version = "0.9", default-features = false }
 # Register access for the I2S1 LCD-mode panel bus; same version esp-hal uses.
 esp32            = "0.41.0"
 
 # Shared, host-tested crates.
 board        = { path = "../crates/board", default-features = false }
+dnssd        = { path = "../crates/dnssd" }
 epd-inkplate = { path = "../epd-inkplate" }
 ipp-codec    = { path = "../crates/ipp-codec" }
+ipp-http     = { path = "../crates/ipp-http" }
 ipp-printer  = { path = "../crates/ipp-printer" }
 raster       = { path = "../crates/raster" }
 render       = { path = "../crates/render" }

@@ -13,6 +13,8 @@ Print a recipe from your phone and the panel keeps showing the last page. See
 | `crates/ipp-printer` | Sans-IO printer: operations, jobs, attributes, mDNS TXT | host + device |
 | `crates/raster` | Streaming PWG Raster / URF decoder | host + device |
 | `crates/render` | Last-page capture, auto-crop, fit, rotate, quantize | host + device |
+| `crates/ipp-http` | IPP over HTTP: edge-http handler for the printer | host + device |
+| `crates/dnssd` | DNS-SD records (`_ipp._tcp`, `_print`/`_universal` subtypes) for edge-mdns | host + device |
 | `epd-inkplate` | Inkplate 6 / 6 V2 panel driver, PMIC, IO expanders (ported, LGPL-3.0) | host + device |
 | `sim` | Host simulator: the printer over hyper, writes `last-page.png` | host |
 | `firmware` | ESP32 binary (`esp-hal`, Embassy, `esp-radio`) | device only |
@@ -33,11 +35,23 @@ ipptool -tv -f recipe.pwg -d filetype=image/pwg-raster ipp://localhost:6310/ipp/
 ipptool -t ipp://localhost:6310/ipp/print get-printer-attributes.test
 ```
 
+`cargo run -p ipp-http --example serve -- 6311` serves the same IPP handler the firmware
+uses (edge-http), which is handy for `ipptool` runs against the device code path.
+
 ## Device
+
+Wi-Fi credentials are compiled in from the environment. Put them in the git-ignored
+`firmware/.env` and source it before building:
+
+```bash
+export WIFI_SSID='my network'
+export WIFI_PASSWORD='secret'      # empty for an open network
+```
 
 ```bash
 source ~/export-esp.sh
 cd firmware
+source .env
 cargo run --release                                   # flash + monitor (Inkplate 6)
 cargo run --release --no-default-features -F inkplate6v2  # another board
 cargo run --release -F panel-test                     # draw a gray ramp at boot
@@ -46,6 +60,15 @@ cargo run --release -F panel-test                     # draw a gray ramp at boot
 The panel test shows 8 gray bands across the panel with a white square inside the black
 band, in the native top-left corner. On an Inkplate 6 held in portrait, white should be at
 the top and the square at the bottom left. Without `panel-test` the firmware never touches the panel at boot.
+
+Once connected, the log shows the IP address and the printer URI. The printer is
+advertised over mDNS as `Inkplate 6 (xxxx)` on `inkplate-xxxx.local`, where `xxxx` comes
+from the MAC address. Check from a Linux machine on the same network:
+
+```bash
+avahi-browse -rt _ipp._tcp
+ipptool -tv ipp://inkplate-xxxx.local:631/ipp/print get-printer-attributes.test
+```
 
 The firmware has its own toolchain (`channel = "esp"`) and target, so it sits outside
 the Cargo workspace and depends on the shared crates by path.

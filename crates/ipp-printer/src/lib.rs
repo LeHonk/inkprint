@@ -218,12 +218,15 @@ impl<B: Board> Printer<B> {
             .op_attr("requested-attributes")
             .map(|a| a.values.iter().filter_map(Value::as_str).collect());
         let mut all = printer_attributes::<B>(&self.config, now, self.busy, self.jobs.active_count());
-        if let Some(names) = requested {
-            let everything = names.iter().any(|n| matches!(*n, "all" | "printer-description" | "job-template"));
-            if !everything {
-                all.attributes.retain(|a| names.contains(&a.name.as_str()));
-            }
-        }
+        let names = requested.unwrap_or_default();
+        let everything =
+            names.is_empty() || names.iter().any(|n| matches!(*n, "all" | "printer-description" | "job-template"));
+        all.attributes.retain(|a| {
+            let name = a.name.as_str();
+            let named = names.contains(&name);
+            // PWG 5100.7: media-col-database is large and only returned when named.
+            if name == "media-col-database" { named } else { everything || named }
+        });
         let mut resp = Message::response(req, StatusCode::SuccessfulOk);
         resp.groups.push(all);
         resp
@@ -274,6 +277,19 @@ mod tests {
         let attrs = &resp.group(DelimiterTag::Printer).unwrap().attributes;
         assert_eq!(attrs.len(), 1);
         assert_eq!(attrs[0].values[0].as_str(), Some("iso_a6_105x148mm"));
+    }
+
+    #[test]
+    fn media_col_database_only_when_named() {
+        let mut p = printer();
+        let has_db = |resp: &Message| resp.group(DelimiterTag::Printer).unwrap().get("media-col-database").is_some();
+        for extra in [alloc::vec![], alloc::vec![("requested-attributes", Value::keyword("all"))]] {
+            let resp = respond(p.handle(&request(Operation::GetPrinterAttributes, &extra), 0));
+            assert!(!has_db(&resp));
+            assert!(resp.group(DelimiterTag::Printer).unwrap().get("media-col-default").is_some());
+        }
+        let req = request(Operation::GetPrinterAttributes, &[("requested-attributes", Value::keyword("media-col-database"))]);
+        assert!(has_db(&respond(p.handle(&req, 0))));
     }
 
     #[test]
