@@ -1482,6 +1482,8 @@ dependencies = [
  "ipp-codec",
  "ipp-printer",
  "log",
+ "raster",
+ "render",
 ]
 
 [[package]]

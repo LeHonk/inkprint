@@ -31,6 +31,8 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embedded_io_async::{Read, Write};
 use ipp_codec::Message;
 use ipp_printer::{JobError, Outcome, PendingJob, Printer};
+use raster::{Decoder, Format};
+use render::{GrayImage, PageCapture};
 
 /// Resource path of the printer, as in `printer-uri` and the mDNS `rp` key.
 pub const PRINTER_PATH: &str = "/ipp/print";
@@ -54,6 +56,64 @@ impl DocumentSink for DiscardDocuments {
         log::warn!("job {}: no display pipeline, discarding document", job.job_id);
         drain(rest).await.map_err(|_| JobError::Aborted)?;
         Err(JobError::Aborted)
+    }
+}
+
+/// Decodes PWG Raster / URF documents and passes the last page to `show`.
+///
+/// Pages are captured box-downsampled to at most `max_width` pixels wide; only the page
+/// being decoded and the last completed one are in memory.
+pub struct ShowLastPage<F> {
+    pub max_width: u32,
+    pub show: F,
+}
+
+impl<F: Fn(GrayImage)> DocumentSink for ShowLastPage<F> {
+    async fn print<R: Read>(&self, job: &PendingJob, first: &[u8], rest: &mut R) -> Result<u32, JobError> {
+        let mut capture = PageCapture::new(self.max_width);
+        let mut buf = [0u8; 1024];
+        let read = async |rest: &mut R, buf: &mut [u8]| rest.read(buf).await.map_err(|_| JobError::Aborted);
+
+        // application/octet-stream: sniff the format from the first bytes.
+        let mut head = Vec::from(first);
+        let format = match job.format {
+            Some(f) => f,
+            None => loop {
+                if let Some(f) = Format::sniff(&head) {
+                    break f;
+                }
+                if head.len() >= 8 {
+                    return Err(JobError::UnsupportedFormat);
+                }
+                let n = read(rest, &mut buf).await?;
+                if n == 0 {
+                    return Err(JobError::UnsupportedFormat);
+                }
+                head.extend_from_slice(&buf[..n]);
+            },
+        };
+
+        let mut decoder = Decoder::new(format);
+        let bad = |e| {
+            log::warn!("job {}: raster error {e:?}", job.job_id);
+            JobError::Malformed
+        };
+        decoder.push(&head, &mut capture).map_err(bad)?;
+        drop(head);
+        loop {
+            let n = read(rest, &mut buf).await?;
+            if n == 0 {
+                break;
+            }
+            decoder.push(&buf[..n], &mut capture).map_err(bad)?;
+        }
+        decoder.finish().map_err(bad)?;
+
+        let pages = capture.pages_seen;
+        let page = capture.take_last_page().ok_or(JobError::Malformed)?;
+        log::info!("job {}: {pages} page(s), last {}x{}", job.job_id, page.width, page.height);
+        (self.show)(page);
+        Ok(pages)
     }
 }
 

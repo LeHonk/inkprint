@@ -9,7 +9,7 @@ use edge_http::io::server::Server;
 use edge_nal::TcpBind;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use ipp_http::{DiscardDocuments, IppHandler};
+use ipp_http::{DiscardDocuments, DocumentSink, IppHandler};
 use ipp_printer::{Config, Printer};
 
 pub fn config(port: u16) -> Config {
@@ -32,13 +32,18 @@ fn uptime() -> u32 {
     START.get_or_init(Instant::now).elapsed().as_secs() as u32
 }
 
-/// Starts a server thread and returns its address once it accepts connections.
+/// Starts a server thread that discards documents.
 pub fn start_server() -> SocketAddr {
+    start_server_with(DiscardDocuments)
+}
+
+/// Starts a server thread and returns its address once it accepts connections.
+pub fn start_server_with<S: DocumentSink + Send + 'static>(sink: S) -> SocketAddr {
     let port = free_port();
     let addr: SocketAddr = ([127, 0, 0, 1], port).into();
     std::thread::spawn(move || {
         let printer = Box::leak(Box::new(Mutex::<NoopRawMutex, _>::new(RefCell::new(Printer::<Inkplate6>::new(config(port))))));
-        let handler = IppHandler::new(printer, DiscardDocuments, uptime);
+        let handler = IppHandler::new(printer, sink, uptime);
         async_io::block_on(async {
             let stack = edge_nal_std::Stack::new();
             let acceptor = stack.bind(addr).await.unwrap();

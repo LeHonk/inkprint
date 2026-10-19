@@ -25,7 +25,8 @@ use embassy_time::{Duration, Instant, Timer};
 use esp_hal::rng::Rng;
 use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{AuthenticationMethodConfig, Config as WifiConfig, Interface, WifiController};
-use ipp_http::{DiscardDocuments, IppHandler};
+use ipp_http::{DiscardDocuments, IppHandler, ShowLastPage};
+use render::GrayImage;
 use ipp_printer::{Config, Printer};
 use log::{info, warn};
 use static_cell::StaticCell;
@@ -39,6 +40,15 @@ const SOCKETS: usize = HTTP_TASKS + 3;
 const MDNS_BUF: usize = 1500;
 
 pub type SharedPrinter = Mutex<CriticalSectionRawMutex, RefCell<Printer<Selected>>>;
+
+/// Last page of the most recent job, for the display task. A newer page replaces one not
+/// yet shown.
+pub static PAGES: Signal<CriticalSectionRawMutex, GrayImage> = Signal::new();
+
+/// Width bound for captured pages: A4 at 150 dpi (1240 px) is halved to 620, enough to
+/// crop margins and still fill the 600 px wide portrait canvas. Two pages of at most
+/// 900 × 1270 px (about 1.1 MB each) live in PSRAM at a time.
+const CAPTURE_MAX_WIDTH: u32 = 900;
 
 /// Compile-time Wi-Fi credentials, if set.
 pub fn credentials() -> Option<(&'static str, &'static str)> {
@@ -164,20 +174,26 @@ fn uptime() -> u32 {
     Instant::now().as_secs() as u32
 }
 
-/// Serves IPP on port 631.
+/// Serves IPP on port 631. With `display`, job pages go to [`PAGES`]; without (no panel
+/// driver for this board, or panel init failed) documents are discarded and jobs abort.
 #[embassy_executor::task]
-pub async fn http_task(stack: Stack<'static>, printer: &'static SharedPrinter) {
+pub async fn http_task(stack: Stack<'static>, printer: &'static SharedPrinter, display: bool) {
     static TCP_BUFFERS: StaticCell<TcpBuffers<HTTP_TASKS, 1536, 2048>> = StaticCell::new();
     static SERVER: StaticCell<Server<HTTP_TASKS, 2048, 32>> = StaticCell::new();
     let tcp = Tcp::new(stack, TCP_BUFFERS.init(TcpBuffers::new()));
     let server = SERVER.init(Server::new());
-    // TODO (milestone 6): replace DiscardDocuments with the raster → display pipeline.
-    let handler = IppHandler::new(printer, DiscardDocuments, uptime);
+    let show = IppHandler::new(printer, ShowLastPage { max_width: CAPTURE_MAX_WIDTH, show: |page| PAGES.signal(page) }, uptime);
+    let discard = IppHandler::new(printer, DiscardDocuments, uptime);
     loop {
         match tcp.bind(SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), IPP_PORT)).await {
             Ok(acceptor) => {
                 info!("IPP: listening on port {IPP_PORT}");
-                if let Err(e) = server.run(Some(30_000), acceptor, &handler).await {
+                let result = if display {
+                    server.run(Some(30_000), acceptor, &show).await
+                } else {
+                    server.run(Some(30_000), acceptor, &discard).await
+                };
+                if let Err(e) = result {
                     warn!("IPP: server stopped: {e:?}");
                 }
             }

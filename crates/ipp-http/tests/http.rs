@@ -169,3 +169,77 @@ fn status_page_and_not_found() {
     c.send(b"GET /nope HTTP/1.1\r\nHost: x\r\n\r\n");
     assert_eq!(c.response().status, 404);
 }
+
+/// A sgray_8 PWG page `width`×`height` filled with `shade`, one literal run per line.
+fn pwg_page(width: u32, height: u32, shade: u8) -> Vec<u8> {
+    let mut h = vec![0u8; 1796];
+    let mut put = |off: usize, v: u32| h[off..off + 4].copy_from_slice(&v.to_be_bytes());
+    put(276, 150);
+    put(280, 150);
+    put(372, width);
+    put(376, height);
+    put(384, 8);
+    put(388, 8);
+    put(392, width);
+    put(400, 18);
+    let mut line = vec![0]; // line repeat
+    let mut left = width;
+    while left > 0 {
+        let run = left.min(128);
+        line.extend([(run - 1) as u8, shade]);
+        left -= run;
+    }
+    for _ in 0..height {
+        h.extend(&line);
+    }
+    h
+}
+
+type Shown = std::sync::Arc<std::sync::Mutex<Vec<render::GrayImage>>>;
+
+fn showing_server() -> (std::net::SocketAddr, Shown) {
+    let shown = Shown::default();
+    let sink = ipp_http::ShowLastPage { max_width: 200, show: { let shown = shown.clone(); move |p| shown.lock().unwrap().push(p) } };
+    (common::start_server_with(sink), shown)
+}
+
+#[test]
+fn print_job_shows_the_last_page() {
+    let (addr, shown) = showing_server();
+    for format in ["image/pwg-raster", "application/octet-stream"] {
+        let mut body = request(Operation::PrintJob, 11, &[("document-format", Value::mime(format))]);
+        body.extend(b"RaS2");
+        body.extend(pwg_page(400, 300, 0x20));
+        body.extend(pwg_page(400, 300, 0xC0));
+        let mut c = Client::connect(addr);
+        c.send(b"POST /ipp/print HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n");
+        c.send(&chunked(&body, 333));
+        let msg = ipp(&c.response());
+        assert_eq!(msg.code, StatusCode::SuccessfulOk as u16, "{format}");
+        let job = msg.group(DelimiterTag::Job).unwrap();
+        assert_eq!(job.get("job-state").unwrap().values[0], Value::Enum(9)); // completed
+        assert_eq!(job.get("job-impressions-completed").unwrap().values[0], Value::Integer(2));
+    }
+    let shown = shown.lock().unwrap();
+    assert_eq!(shown.len(), 2);
+    // Downsampled 2× to fit max_width 200; second page's shade.
+    assert_eq!((shown[0].width, shown[0].height), (200, 150));
+    assert!(shown[0].pixels.iter().all(|&p| p == 0xC0));
+}
+
+#[test]
+fn bad_documents_are_rejected() {
+    let (addr, shown) = showing_server();
+    let cases = [
+        ("application/octet-stream", b"%PDF-1.7 not a raster".to_vec(), StatusCode::ClientErrorDocumentFormatNotSupported),
+        ("image/pwg-raster", b"RaS2 truncated header".to_vec(), StatusCode::ClientErrorBadRequest),
+    ];
+    for (format, doc, status) in cases {
+        let mut body = request(Operation::PrintJob, 12, &[("document-format", Value::mime(format))]);
+        body.extend(doc);
+        let mut c = Client::connect(addr);
+        let msg = ipp(&c.post_ipp(&body));
+        assert_eq!(msg.code, status as u16, "{format}");
+    }
+    assert!(shown.lock().unwrap().is_empty());
+}

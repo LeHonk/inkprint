@@ -76,6 +76,8 @@ async fn main(spawner: Spawner) -> ! {
 
     info!("Embassy initialized!");
 
+    #[allow(unused_mut, reason = "only boards with a display driver set it")]
+    let mut display = false;
     #[cfg(any(feature = "inkplate6", feature = "inkplate6v2"))]
     {
         let mut i2c = I2c::new(peripherals.I2C0, I2cConfig::default())
@@ -116,7 +118,8 @@ async fn main(spawner: Spawner) -> ! {
                 }
                 #[cfg(feature = "panel-test")]
                 show_test_pattern(&mut panel);
-                // TODO: hand `panel` to a display task fed by the IPP job pipeline.
+                spawner.spawn(inkprint_firmware::display::display_task(panel).expect("spawn display"));
+                display = true;
             }
             Err(e) => warn!("panel init failed, running without display: {e:?}"),
         }
@@ -126,7 +129,7 @@ async fn main(spawner: Spawner) -> ! {
     info!("{}: {}x{} portrait canvas", Selected::MODEL, width, height);
 
     match net::credentials() {
-        Some((ssid, password)) => start_network(spawner, peripherals.WIFI, ssid, password).await,
+        Some((ssid, password)) => start_network(spawner, peripherals.WIFI, ssid, password, display).await,
         None => warn!("no Wi-Fi credentials compiled in: set WIFI_SSID and WIFI_PASSWORD (see README)"),
     }
 
@@ -137,7 +140,13 @@ async fn main(spawner: Spawner) -> ! {
 
 /// Brings up Wi-Fi and DHCP, then starts mDNS and the IPP server.
 #[allow(clippy::large_stack_frames, reason = "runs once at boot on main's stack, like main")]
-async fn start_network(spawner: Spawner, wifi: esp_hal::peripherals::WIFI<'static>, ssid: &'static str, password: &'static str) {
+async fn start_network(
+    spawner: Spawner,
+    wifi: esp_hal::peripherals::WIFI<'static>,
+    ssid: &'static str,
+    password: &'static str,
+    display: bool,
+) {
     static IDENTITY: StaticCell<Identity> = StaticCell::new();
     static PRINTER: StaticCell<SharedPrinter> = StaticCell::new();
 
@@ -166,7 +175,7 @@ async fn start_network(spawner: Spawner, wifi: esp_hal::peripherals::WIFI<'stati
         info!("IP address {} — printer at ipp://{}.local:{}/ipp/print", cfg.address, identity.hostname, net::IPP_PORT);
     }
     spawner.spawn(net::mdns_task(stack, identity, txt).expect("spawn mdns"));
-    spawner.spawn(net::http_task(stack, printer).expect("spawn http"));
+    spawner.spawn(net::http_task(stack, printer, display).expect("spawn http"));
 }
 
 /// Gray ramp in 8 bands across the native panel width (black at native x = 0), with a
