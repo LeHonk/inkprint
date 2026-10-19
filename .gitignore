@@ -3,3 +3,4 @@
 last-page.png
 *.pwg
 *.urf
+.env

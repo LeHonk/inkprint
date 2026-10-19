@@ -50,6 +50,27 @@ the top and the square at the bottom left. Without `panel-test` the firmware nev
 The firmware has its own toolchain (`channel = "esp"`) and target, so it sits outside
 the Cargo workspace and depends on the shared crates by path.
 
+### ESP32 revision 1 boards
+
+esp-hal requires ESP32 chip revision 3.0 or later, and the boot log (`boot: chip
+revision: v1.0`) or espflash will complain on older chips, as found on early Inkplate 6
+boards. Revisions below 3.0 have a silicon bug in cached PSRAM access that ESP-IDF's C
+compiler works around (`-mfix-esp32-psram-cache-issue`) but Rust does not. The firmware
+keeps its page buffers in PSRAM, so on these chips expect occasional data corruption or
+crashes. A crash during a refresh can leave the panel's high-voltage rails on; reset or
+unplug the board if it hangs mid-refresh.
+
+The override is therefore never committed. To accept the risk on your own machine, create
+`firmware/.env` (ignored by git) and source it before building:
+
+```bash
+echo 'export ESP_HAL_CONFIG_MIN_CHIP_REVISION=100' > firmware/.env
+cd firmware && source .env && cargo run --release
+```
+
+The setting is read at build time, so it only takes effect for builds run from that
+shell. Boards with revision 3.0 or later (ESP32-WROVER-E) need nothing.
+
 ## License
 
 MIT OR Apache-2.0, except the display driver ported from Soldered's
