@@ -12,6 +12,9 @@ inkplate6plus  = ["board/inkplate6plus"]
 inkplate10     = ["board/inkplate10"]
 inkplate5      = ["board/inkplate5"]
 inkplate6color = ["board/inkplate6color"]
+# Draw a gray ramp at boot to check the display driver (normally the panel is never
+# touched at boot, so the last printed page survives restarts).
+panel-test = []
 
 [[bin]]
 name = "inkprint"
@@ -72,6 +75,8 @@ smoltcp = { version = "0.14.0", default-features = false, features = [
 ] }
 
 critical-section = "1.2.0"
+# Register access for the I2S1 LCD-mode panel bus; same version esp-hal uses.
+esp32            = "0.41.0"
 
 # Shared, host-tested crates.
 board        = { path = "../crates/board", default-features = false }

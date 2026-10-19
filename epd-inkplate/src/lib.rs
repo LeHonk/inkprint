@@ -1,33 +1,38 @@
+// SPDX-License-Identifier: LGPL-3.0-only
 //! Display drivers for the Inkplate family.
 //!
-//! Only the timing-critical bus access is board/HAL specific, behind [`ParallelBus`]; the
-//! firmware implements it with direct GPIO register writes. Everything else uses
-//! `embedded-hal` traits so this crate builds and unit-tests on the host.
+//! Ported from Soldered's Inkplate-Arduino-library (LGPL-3.0), which is why this crate is
+//! LGPL-3.0 while the rest of the workspace is MIT OR Apache-2.0:
+//! <https://github.com/SolderedElectronics/Inkplate-Arduino-library>, `src/boards/Inkplate6`,
+//! `src/features/TPS65186`, `src/system/{mcpExpander,pcalExpander,UtilI2S}`.
+//!
+//! The chip-specific part (I2S/DMA data bus and the GPIO-driven control lines) sits behind
+//! [`PanelBus`]; the firmware implements it with direct register access. Everything else —
+//! scan sequencing, waveforms, PMIC and IO expanders over `embedded-hal` I2C — lives here
+//! and is unit-tested on the host.
 //!
 //! Drivers never clear the panel on init: the last printed page must survive reboots.
-//!
-//! References for porting: Soldered `Inkplate-Arduino-library` (Inkplate6 driver,
-//! waveform tables, TPS65186 power sequence) and turgu1/ESP-IDF-InkPlate.
 
 #![no_std]
 
-pub mod parallel;
+extern crate alloc;
+
+pub mod expander;
+pub mod inkplate6;
+pub mod luts;
 pub mod tps65186;
 
-/// A frame in the panel's native orientation, one byte per pixel, `WIDTH × HEIGHT`.
+/// A frame in the panel's native orientation, one byte per pixel, `WIDTH × HEIGHT`, row-major.
 #[derive(Debug, Clone, Copy)]
 pub enum Frame<'a> {
     /// Levels 0 (black) … 7 (white).
     Gray3(&'a [u8]),
-    /// 0 = black, 1 = white.
+    /// 0 = black, anything else = white.
     Mono(&'a [u8]),
 }
 
 pub trait EpdDriver {
     type Error;
-
-    /// Powers up the panel rails without changing what is displayed.
-    fn init(&mut self) -> Result<(), Self::Error>;
 
     /// Full refresh (with clean cycles) to show `frame`.
     fn show(&mut self, frame: Frame<'_>) -> Result<(), Self::Error>;
@@ -36,18 +41,29 @@ pub trait EpdDriver {
     fn sleep(&mut self) -> Result<(), Self::Error>;
 }
 
-/// Low-level parallel EPD bus: 8 data lines (4 pixels × 2 bits per byte) plus the source
-/// driver clock/latch and gate driver lines. Implementations must be fast — a full
-/// refresh writes the whole frame once per waveform phase.
-pub trait ParallelBus {
-    /// Starts a frame scan (gate driver to first row).
-    fn vscan_start(&mut self);
-    /// Starts a row, clocking in its first data byte.
-    fn hscan_start(&mut self, first: u8);
-    /// Clocks one data byte into the source driver.
-    fn write(&mut self, byte: u8);
-    /// Latches the row and advances the gate driver.
-    fn row_end(&mut self);
-    /// Ends the frame scan.
-    fn vscan_end(&mut self);
+/// The ESP32 side of the parallel panel interface.
+///
+/// Data goes out over 8 data lines plus the CL clock (I2S1 in LCD mode with DMA on the
+/// Inkplate 6); CKV, SPH and LE are plain GPIOs. SPV, OE and GMOD are on the IO expander
+/// and handled by the driver.
+pub trait PanelBus {
+    /// Gate driver clock (CKV).
+    fn set_ckv(&mut self, high: bool);
+    /// Source driver start pulse (SPH).
+    fn set_sph(&mut self, high: bool);
+    /// Source driver latch enable (LE).
+    fn set_le(&mut self, high: bool);
+
+    /// Clocks one row of `WIDTH / 4` bytes into the source driver, like the Arduino
+    /// `sendDataI2S`: arm the DMA, SPH low, CKV high, transmit, wait for completion, SPH high.
+    ///
+    /// `row` is in the byte order the Arduino driver writes into its I2S DMA buffer; the
+    /// implementation must use the same I2S FIFO mode (`tx_fifo_mod = 1`) so the bytes reach
+    /// the panel in the same order.
+    fn send_row(&mut self, row: &[u8]);
+
+    /// Routes data/CL pins to the bus and makes CKV/SPH/LE outputs (`pinsAsOutputs`).
+    fn enable(&mut self);
+    /// Puts all panel pins in high impedance (`pinsZstate`).
+    fn disable(&mut self);
 }

@@ -1336,6 +1336,7 @@ dependencies = [
  "esp-println",
  "esp-radio",
  "esp-rtos",
+ "esp32 0.41.0",
  "ipp-codec",
  "ipp-printer",
  "log",
