@@ -135,8 +135,11 @@ pub fn printer_attributes<B: Board>(config: &Config, now: u32, busy: bool, queue
     g.push("orientation-requested-supported", [Value::Enum(3), Value::Enum(4)]);
     g.push("finishings-default", [Value::Enum(3)]);
     g.push("finishings-supported", [Value::Enum(3)]);
-    g.push("output-bin-default", keywords(&["face-up"]));
-    g.push("output-bin-supported", keywords(&["face-up"]));
+    // Face-down: clients send pages first to last. For face-up bins they reverse the order
+    // (Android's print service, CUPS) so the stack comes out right, and the page left on
+    // the panel would be the first one instead of the last.
+    g.push("output-bin-default", keywords(&["face-down"]));
+    g.push("output-bin-supported", keywords(&["face-down"]));
     g.push("multiple-document-handling-supported", keywords(&["separate-documents-uncollated-copies"]));
     g.push("color-supported", [Value::Boolean(color)]);
     g

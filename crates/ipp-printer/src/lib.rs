@@ -293,6 +293,17 @@ mod tests {
     }
 
     #[test]
+    fn output_bin_is_face_down_so_pages_arrive_in_order() {
+        let mut p = printer();
+        let resp = respond(p.handle(&request(Operation::GetPrinterAttributes, &[]), 0));
+        let attrs = resp.group(DelimiterTag::Printer).unwrap();
+        for name in ["output-bin-default", "output-bin-supported"] {
+            let values: alloc::vec::Vec<&str> = attrs.get(name).unwrap().values.iter().filter_map(Value::as_str).collect();
+            assert_eq!(values, ["face-down"], "{name}");
+        }
+    }
+
+    #[test]
     fn media_col_database_only_when_named() {
         let mut p = printer();
         let has_db = |resp: &Message| resp.group(DelimiterTag::Printer).unwrap().get("media-col-database").is_some();
