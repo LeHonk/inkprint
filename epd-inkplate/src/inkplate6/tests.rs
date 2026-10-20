@@ -141,7 +141,7 @@ impl DelayNs for NoDelay {
 fn panel(rails_come_up: bool) -> (Inkplate6Panel<Tiny, Bus, MockI2c, NoDelay>, Bus, MockI2c) {
     let bus = Bus::default();
     let i2c = MockI2c::new(rails_come_up);
-    let p = Inkplate6Panel::new(bus.clone(), i2c.clone(), NoDelay).unwrap();
+    let p = Inkplate6Panel::new(bus.clone(), i2c.clone(), NoDelay, true).unwrap();
     (p, bus, i2c)
 }
 
@@ -250,7 +250,7 @@ fn reads_temperature_without_leaving_rails_on() {
 fn missing_external_expander_is_tolerated() {
     let mut i2c = MockI2c::new(true);
     i2c.absent.push(INKPLATE6.ext_address);
-    let p = Inkplate6Panel::<Tiny, _, _, _>::new(Bus::default(), i2c.clone(), NoDelay).unwrap();
+    let p = Inkplate6Panel::<Tiny, _, _, _>::new(Bus::default(), i2c.clone(), NoDelay, true).unwrap();
     assert!(!p.has_ext_expander());
     assert!(i2c.writes.borrow().iter().all(|(a, _)| *a != INKPLATE6.ext_address));
 }
@@ -260,8 +260,8 @@ fn init_errors_name_the_device() {
     for (address, device) in [(INKPLATE6.int_address, Device::IoExpander), (tps::ADDRESS, Device::Pmic)] {
         let mut i2c = MockI2c::new(true);
         i2c.absent.push(address);
-        let err = Inkplate6Panel::<Tiny, _, _, _>::new(Bus::default(), i2c, NoDelay).err();
-        assert_eq!(err, Some(Error::Init { device, error: Nack }));
+        let err = Inkplate6Panel::<Tiny, _, _, _>::new(Bus::default(), i2c, NoDelay, true).err();
+        assert!(matches!(err, Some(Error::Init { device: d, error: Nack, .. }) if d == device), "{err:?}");
     }
 }
 
@@ -279,4 +279,13 @@ fn burn_in_clean_runs_upstream_cycle_and_powers_down() {
     assert_eq!(frames, expected);
     assert_eq!(bus.0.borrow().last(), Some(&Ev::Disable));
     assert_eq!(i2c.pmic_writes().last(), Some(&vec![tps::REG_ENABLE, 0]));
+}
+
+#[test]
+fn absent_external_expander_is_not_probed_when_told() {
+    let i2c = MockI2c::new(true);
+    let p = Inkplate6Panel::<Tiny, _, _, _>::new(Bus::default(), i2c.clone(), NoDelay, false).unwrap();
+    assert!(!p.has_ext_expander());
+    // Not a single transfer to the external expander's address, so no NACK at all.
+    assert!(i2c.writes.borrow().iter().all(|(a, _)| *a != INKPLATE6.ext_address));
 }

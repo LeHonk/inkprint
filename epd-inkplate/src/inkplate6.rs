@@ -76,8 +76,8 @@ pub enum Device {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error<E> {
-    /// A device did not respond during [`Inkplate6Panel::new`].
-    Init { device: Device, error: E },
+    /// An I2C step of [`Inkplate6Panel::new`] failed: which device, which step.
+    Init { device: Device, stage: &'static str, error: E },
     I2c(E),
     /// The PMIC did not report all rails good within 250 ms.
     PowerGood,
@@ -115,61 +115,66 @@ where
 
     /// Sets up the expanders and PMIC (`gpioInit` + `initDriver`). Leaves the panel
     /// unpowered and untouched, so whatever it shows stays visible.
-    pub fn new(bus: BUS, mut i2c: I2C, mut delay: D) -> Result<Self, Error<I2C::Error>> {
+    ///
+    /// `probe_ext_expander`: whether to look for the optional external expander. Pass what
+    /// an I2C scan found: on the ESP32 the transfer after an expected NACK has been seen to
+    /// time out, so a known-absent device is better not probed at all.
+    pub fn new(bus: BUS, mut i2c: I2C, mut delay: D, probe_ext_expander: bool) -> Result<Self, Error<I2C::Error>> {
         let v = B::VARIANT;
-        let init = |device| move |error| Error::Init { device, error };
-        let mut io = Expander::begin(&mut i2c, v.expander, v.int_address).map_err(init(Device::IoExpander))?;
+        let at = |device, stage| move |error| Error::Init { device, stage, error };
+        let io_at = |stage| at(Device::IoExpander, stage);
+        let mut io = Expander::begin(&mut i2c, v.expander, v.int_address).map_err(io_at("probe"))?;
         // Upstream writes the battery pin here while it is still an input, which has no
         // effect; it is set up below instead.
         // Upstream ignores a missing external expander (and every I2C error); it only
         // holds user pins, so carry on without it.
-        let mut ext = Expander::begin(&mut i2c, v.expander, v.ext_address).ok();
+        let mut ext = if probe_ext_expander { Expander::begin(&mut i2c, v.expander, v.ext_address).ok() } else { None };
 
         for p in [pin::VCOM, pin::PWRUP, pin::WAKEUP, pin::GPIO0_ENABLE] {
-            io.pin_mode(&mut i2c, p, Mode::Output)?;
+            io.pin_mode(&mut i2c, p, Mode::Output).map_err(io_at("PMIC control pins as outputs"))?;
         }
-        io.write(&mut i2c, pin::GPIO0_ENABLE, true)?;
+        io.write(&mut i2c, pin::GPIO0_ENABLE, true).map_err(io_at("enable GPIO0 routing"))?;
 
         // TPS65186::begin: program the rail sequence while awake.
-        io.write(&mut i2c, pin::WAKEUP, true)?;
+        io.write(&mut i2c, pin::WAKEUP, true).map_err(io_at("PMIC wake-up"))?;
         delay.delay_ms(1);
-        tps::write_begin_sequence(&mut i2c).map_err(init(Device::Pmic))?;
+        tps::write_begin_sequence(&mut i2c).map_err(at(Device::Pmic, "power sequence"))?;
         delay.delay_ms(1);
-        io.write(&mut i2c, pin::WAKEUP, false)?;
+        io.write(&mut i2c, pin::WAKEUP, false).map_err(io_at("PMIC sleep"))?;
 
         // Unused pins as low outputs: upstream measured lower deep-sleep current this way.
         if let Some(ext) = &mut ext {
             for p in 0..15 {
-                ext.pin_mode(&mut i2c, p, Mode::Output).map_err(init(Device::ExtExpander))?;
-                ext.write(&mut i2c, p, false).map_err(init(Device::ExtExpander))?;
+                ext.pin_mode(&mut i2c, p, Mode::Output).map_err(at(Device::ExtExpander, "pins as outputs"))?;
+                ext.write(&mut i2c, p, false).map_err(at(Device::ExtExpander, "pins low"))?;
             }
         }
         for p in [14, 15] {
-            io.pin_mode(&mut i2c, p, Mode::Output)?;
-            io.write(&mut i2c, p, false)?;
+            io.pin_mode(&mut i2c, p, Mode::Output).map_err(io_at("unused pins as outputs"))?;
+            io.write(&mut i2c, p, false).map_err(io_at("unused pins low"))?;
         }
         match v.expander {
             // 6 V2: SD card supply off. (Upstream also floats ESP32 GPIO12–15; that is the
             // firmware's business.)
-            Kind::Pcal6416a => io.pin_mode(&mut i2c, pin::SD_PMOS, Mode::Input)?,
+            Kind::Pcal6416a => io.pin_mode(&mut i2c, pin::SD_PMOS, Mode::Input).map_err(io_at("SD supply off"))?,
             Kind::Mcp23017 => {}
         }
 
         // initDriver: panel control lines, touchpad / unused pins, battery divider off.
         for p in [pin::OE, pin::GMOD, pin::SPV] {
-            io.pin_mode(&mut i2c, p, Mode::Output)?;
+            io.pin_mode(&mut i2c, p, Mode::Output).map_err(io_at("panel control pins as outputs"))?;
         }
         for p in [10, 11, 12] {
             match v.expander {
-                Kind::Mcp23017 => io.pin_mode(&mut i2c, p, Mode::Input)?, // touchpad
+                Kind::Mcp23017 => io.pin_mode(&mut i2c, p, Mode::Input).map_err(io_at("touchpad pins"))?,
                 Kind::Pcal6416a => {
-                    io.pin_mode(&mut i2c, p, Mode::Output)?;
-                    io.write(&mut i2c, p, false)?;
+                    io.pin_mode(&mut i2c, p, Mode::Output).map_err(io_at("pins 10-12 as outputs"))?;
+                    io.write(&mut i2c, p, false).map_err(io_at("pins 10-12 low"))?;
                 }
             }
         }
-        io.pin_mode(&mut i2c, pin::BATTERY_MOSFET, Mode::Output)?;
-        io.write(&mut i2c, pin::BATTERY_MOSFET, false)?;
+        io.pin_mode(&mut i2c, pin::BATTERY_MOSFET, Mode::Output).map_err(io_at("battery divider pin"))?;
+        io.write(&mut i2c, pin::BATTERY_MOSFET, false).map_err(io_at("battery divider off"))?;
 
         Ok(Self {
             bus,

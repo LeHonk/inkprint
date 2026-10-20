@@ -24,7 +24,7 @@ use ipp_printer::Printer;
 use static_cell::StaticCell;
 #[cfg(any(feature = "inkplate6", feature = "inkplate6v2"))]
 use {
-    epd_inkplate::inkplate6::Inkplate6Panel,
+    epd_inkplate::inkplate6::{Inkplate6Board, Inkplate6Panel},
     esp_hal::delay::Delay,
     esp_hal::gpio::Pin,
     esp_hal::i2c::master::{Config as I2cConfig, I2c},
@@ -88,7 +88,10 @@ async fn main(spawner: Spawner) -> ! {
             .expect("I2C config")
             .with_sda(peripherals.GPIO21)
             .with_scl(peripherals.GPIO22);
-        log_i2c_devices(&mut i2c);
+        let found = log_i2c_devices(&mut i2c);
+        if option_env!("INKPRINT_I2C_DIAG").is_some() {
+            i2c_diagnostics(&mut i2c);
+        }
         let bus = I2sPanelBus::new(
             peripherals.I2S1,
             PanelPins {
@@ -111,7 +114,10 @@ async fn main(spawner: Spawner) -> ! {
         #[cfg(feature = "panel-test")]
         check_psram();
         // Does not touch the panel: whatever it shows stays visible.
-        match Inkplate6Panel::<Selected, _, _, _>::new(bus, i2c, Delay::new()) {
+        // Probe the optional external expander only if the scan saw it: the transfer after an
+        // expected NACK has been seen to time out on this chip (see i2c_diagnostics).
+        let ext_present = found.contains(&<Selected as Inkplate6Board>::VARIANT.ext_address);
+        match Inkplate6Panel::<Selected, _, _, _>::new(bus, i2c, Delay::new(), ext_present) {
             Ok(mut panel) => {
                 if !panel.has_ext_expander() {
                     info!("no external IO expander found (optional)");
@@ -267,10 +273,32 @@ fn recover_i2c_bus(sda: impl Pin, scl: impl Pin) {
     }
 }
 
+/// The step that failed in panel init was a write to the expander (0x20) right after the
+/// absent second expander (0x22) NACKed. Replays that pair, logging only after each pair (a
+/// log line takes milliseconds): immediately, and with a 1 ms pause. The write puts back
+/// the IODIRA value just read, so nothing changes. Enabled with INKPRINT_I2C_DIAG=1.
+#[cfg(any(feature = "inkplate6", feature = "inkplate6v2"))]
+#[allow(clippy::large_stack_frames, reason = "diagnostic run once at boot on main's stack")]
+fn i2c_diagnostics(i2c: &mut I2c<'_, esp_hal::Blocking>) {
+    let mut iodir = [0u8; 1];
+    let read = i2c.write_read(0x20, &[0x00], &mut iodir);
+    info!("diag: read 0x20 IODIRA: {read:?} -> {:02x}", iodir[0]);
+    let restore = [0x00, iodir[0]];
+    let mut absent = [0u8; 22];
+
+    let (nack, write) = (i2c.write_read(0x22, &[0x00], &mut absent), i2c.write(0x20, &restore));
+    info!("diag A immediate:   NACK {nack:?}, then write {write:?}");
+
+    let nack = i2c.write_read(0x22, &[0x00], &mut absent);
+    Delay::new().delay_millis(1);
+    let write = i2c.write(0x20, &restore);
+    info!("diag C 1 ms gap:    NACK {nack:?}, then write {write:?}");
+}
+
 /// Logs every 7-bit address that acknowledges on the bus. The PMIC (0x48) only answers
 /// while its WAKEUP pin is high, so it normally does not show up here.
 #[cfg(any(feature = "inkplate6", feature = "inkplate6v2"))]
-fn log_i2c_devices(i2c: &mut I2c<'_, esp_hal::Blocking>) {
+fn log_i2c_devices(i2c: &mut I2c<'_, esp_hal::Blocking>) -> alloc::vec::Vec<u8> {
     let mut found = alloc::vec::Vec::new();
     for address in 0x08..0x78u8 {
         // A 1-byte read is valid everywhere (esp-hal rejects some zero-length transfers).
@@ -279,6 +307,7 @@ fn log_i2c_devices(i2c: &mut I2c<'_, esp_hal::Blocking>) {
         }
     }
     info!("I2C devices: {found:02x?}");
+    found
 }
 
 /// Writes and reads back 1 MB, which only fits in PSRAM. Rev 1 ESP32s have a PSRAM cache
