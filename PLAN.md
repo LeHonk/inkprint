@@ -10,6 +10,69 @@ by contrast, turns its screen off after a period of inactivity.
 The firmware is configurable at compile time for other Inkplate variants (larger screens,
 color panels). The first iteration targets the black-and-white/grayscale Inkplate 6.
 
+## Status (2026-10-20)
+
+The user story works end to end on an Inkplate 6 (original, ESP32 rev 1.0, no RTC): print
+a recipe from Chrome on Android and the panel keeps showing the last page. Milestones 1–7
+are done; milestone 8 (other boards) waits for hardware. The sections below this one are
+the original plan, kept for its reasoning; where the implementation went differently, the
+list further down says so.
+
+**Verified on the Inkplate 6:** 3-bit gray display, Wi-Fi, mDNS (`avahi-browse`), IPP
+(`ipptool`), printing from Chrome on Android (page order, last page shown), Identify-Printer
+status screen with ghost-free restore, Wi-Fi setup portal and settings in flash, NTP time,
+JPEG photos (largest 7.5 MB, about a minute), brightness setting, panel init (10 of 10
+boots after the I2C fix).
+
+**Verified on the host only:** CUPS `ipp-everywhere.test` (26 pass, 0 fail, 13 skipped for
+optional features), 92 unit and integration tests, the PCF85063A RTC driver (against a
+register-level mock), Inkplate 6 V2 / 10 / 6PLUS / 5 / 6COLOR firmware builds.
+
+**Not tested yet:** iOS / macOS (AirPrint, the printer icon), Windows, Android defaulting to
+4×6 paper after the ready-media change, any board other than the original Inkplate 6.
+
+### Where the implementation differs from the plan
+
+- **Display data path:** the panel is fed by I2S1 in LCD mode with DMA, as the current
+  Arduino library does, not by bit-banged GPIO. The driver (`epd-inkplate`) is a port of
+  that library and therefore LGPL-3.0; the rest is MIT OR Apache-2.0.
+- **JPEG is supported** after all: a streaming baseline decoder (`crates/jpeg`) decodes one
+  row of 8×8 blocks at a time, so phone photos fit in memory. Progressive JPEGs are
+  rejected. IPP Everywhere requires JPEG, and with it `ipp-everywhere.test` passes.
+- **All IPP Everywhere operations** are implemented (Create-Job, Send-Document, Cancel-Job,
+  Close-Job, Cancel-My-Jobs, Identify-Printer), not only Print-Job.
+- **DNS-SD records are our own** (`crates/dnssd`): edge-mdns publishes subtypes as a
+  two-level PTR chain that `_print` / `_universal` browsers cannot resolve.
+- **Android quirks:** its print service has no A6, so 4×6 is reported as ready next to A6;
+  it sends pages in reverse for face-up output bins, so the printer reports face-down.
+- **Settings and setup:** Wi-Fi network, password, location and brightness live in the
+  `nvs` partition, set through a captive portal (`Inkprint-xxxx` access point) or
+  `/setup` on the LAN. Compiled-in credentials remain a development fallback.
+- **Time:** NTP from `pool.ntp.org` daily, plus the PCF85063A RTC on boards that have one.
+  The NTP server from the DHCP lease (option 42) is not used: embassy-net 0.9 doesn't
+  expose DHCP options.
+- **I2C on the original ESP32:** the transfer after an expected NACK sometimes timed out,
+  depending on code layout. Devices are therefore only probed when the boot scan saw them;
+  `INKPRINT_I2C_DIAG=1` replays the failing pattern. Cause not pinned down: esp-hal's NACK
+  recovery on this chip, or the rev 1 PSRAM bug.
+- **Rev 1.0 ESP32:** esp-hal requires rev 3; the override lives in the git-ignored
+  `firmware/.env` (see README) because Rust code doesn't work around the PSRAM cache bug.
+
+### Remaining work
+
+- **Crop tuning,** once real recipes show what needs changing.
+- **Other boards (milestone 8):** Inkplate 6 V2, 10, 6PLUS, 5, then the 6COLOR color path.
+  Their `Board` entries exist; panel drivers, waveforms and pin maps need porting and
+  hardware to test on.
+- **Client coverage:** test iOS / macOS (AirPrint, icon) and Windows. If current iOS no
+  longer prints to plain `ipp://`, `ipps` (TLS) becomes necessary.
+- **Optional:**
+  - NTP server from DHCP (needs an embassy-net change);
+  - faster large JPEGs (scaled IDCT);
+  - per-job contrast from IPP (`print-darkness`, `print-content-optimize`);
+  - touchpad controls on boards that have them;
+  - a password for the setup page and access point.
+
 ## 0. Decisions that shape the rest
 
 **1. Do not render PDF on the device. Accept only raster formats.**
@@ -200,23 +263,34 @@ There are two driver families:
 
 ## 4. Milestones
 
-1. **Bring-up:** `esp-generate` project, serial log, PSRAM allocation verified, I2C scan
+Status markers: ✅ done, ◐ partly done, ⏳ waiting.
+
+1. ✅ **Bring-up:** `esp-generate` project, serial log, PSRAM allocation verified, I2C scan
    finds the expander and PMIC.
-2. **Display:** PMIC power sequence, 1-bit full refresh of a test pattern, then 3-bit
+2. ✅ **Display:** PMIC power sequence, 1-bit full refresh of a test pattern, then 3-bit
    gray. *(Highest risk. Do it early.)*
-3. **Codecs on host:** IPP codec and raster decoders with golden tests. Capture real jobs
-   from CUPS, Android and iOS using the simulator.
-4. **Simulator end-to-end:** print from laptop and phone to `sim`, with the result
+3. ◐ **Codecs on host:** IPP codec and raster decoders with golden tests. Capture real jobs
+   from CUPS, Android and iOS using the simulator. *Done with synthetic rasters, an
+   independent JPEG encoder and real camera photos; no captured Android/iOS jobs.*
+4. ✅ **Simulator end-to-end:** print from laptop and phone to `sim`, with the result
    rendered as a PNG. Pass `ipptool -tv ipp://host/ipp/print ipp-everywhere.test` as far
-   as is reasonable.
-5. **Network on device:** Wi-Fi, mDNS visible in `avahi-browse`, Get-Printer-Attributes
+   as is reasonable. *`ipp-everywhere.test` passes fully; phones were tested against the
+   device rather than the simulator.*
+5. ✅ **Network on device:** Wi-Fi, mDNS visible in `avahi-browse`, Get-Printer-Attributes
    over HTTP.
-6. **Integration:** streaming Print-Job into PSRAM and showing the last page on the panel.
-7. **Polish:** Identify-Printer, printer icon, status screen, crop tuning, Wi-Fi
-   provisioning (captive portal instead of compile-time credentials).
-8. **Other boards:** Inkplate 10 / 6PLUS features, then the 6COLOR color path.
+6. ✅ **Integration:** streaming Print-Job into PSRAM and showing the last page on the panel.
+7. ◐ **Polish:** Identify-Printer, printer icon, status screen, crop tuning, Wi-Fi
+   provisioning (captive portal instead of compile-time credentials). *All done except
+   crop tuning; also added: location and brightness settings, NTP/RTC time.*
+8. ⏳ **Other boards:** Inkplate 10 / 6PLUS features, then the 6COLOR color path. *Waiting
+   for hardware.*
 
 ## 5. Risks to check early
+
+*Outcomes so far:* display timing worked by porting upstream's I2S path; mDNS on bare metal
+works (with our own DNS-SD records); Android and CUPS print fine; iOS and Windows are
+untested; the board turned out to be a rev 1.0 ESP32 — no PSRAM artifacts seen in
+printing, but see the I2C note in Status.
 
 - **Display waveforms and timing:** these are panel-specific, and timing-critical GPIO
   access from PSRAM-backed buffers is a concern. The Arduino library proves the hardware
