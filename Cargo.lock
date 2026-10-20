@@ -580,6 +580,8 @@ dependencies = [
  "moxcms",
  "num-traits",
  "png",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -600,6 +602,8 @@ dependencies = [
  "embedded-io-async",
  "ipp-codec",
  "ipp-printer",
+ "jpeg",
+ "jpeg-encoder",
  "log",
  "raster",
  "render",
@@ -612,6 +616,7 @@ dependencies = [
  "board",
  "clock",
  "ipp-codec",
+ "jpeg",
  "raster",
 ]
 
@@ -654,6 +659,23 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
+
+[[package]]
+name = "jpeg"
+version = "0.1.0"
+dependencies = [
+ "embassy-futures",
+ "embedded-io-async",
+ "image",
+ "jpeg-encoder",
+ "raster",
+]
+
+[[package]]
+name = "jpeg-encoder"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0370574b86f7eca156b9f298392b5e69a23f8c86f3f865add60bbc2e79467a6"
 
 [[package]]
 name = "libc"
@@ -899,8 +921,8 @@ dependencies = [
  "hyper-util",
  "image",
  "ipp-codec",
+ "ipp-http",
  "ipp-printer",
- "raster",
  "render",
  "tokio",
 ]
@@ -1044,3 +1066,18 @@ name = "zlib-rs"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
+
+[[package]]
+name = "zune-core"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d56377fd46368984a170bc5aac5567e52ca5da874caa60bea39fcbca78fb658b"
+
+[[package]]
+name = "zune-jpeg"
+version = "0.5.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
+dependencies = [
+ "zune-core",
+]

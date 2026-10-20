@@ -311,3 +311,48 @@ fn serves_the_icon() {
     assert!(resp.headers.iter().any(|(k, v)| k == "content-type" && v == "image/png"));
     assert!(resp.body.starts_with(b"\x89PNG\r\n\x1a\n"));
 }
+
+#[test]
+fn print_job_jpeg_is_shown_upright() {
+    let (addr, shown) = showing_server();
+    // 160×80 gray image, bright on the left, with EXIF orientation 6 ("rotate 90° CW").
+    let (w, h) = (160u16, 80u16);
+    let pixels: Vec<u8> = (0..h).flat_map(|_| (0..w).map(|x| if x < 40 { 250 } else { 30 })).collect();
+    let mut jpeg = Vec::new();
+    let mut enc = jpeg_encoder::Encoder::new(&mut jpeg, 90);
+    let mut exif = b"Exif\0\0II\x2a\0\x08\0\0\0\x01\0".to_vec();
+    exif.extend([0x12, 0x01, 0x03, 0x00, 1, 0, 0, 0, 6, 0, 0, 0]);
+    enc.add_app_segment(1, exif).unwrap();
+    enc.encode(&pixels, w, h, jpeg_encoder::ColorType::Luma).unwrap();
+
+    for format in ["image/jpeg", "application/octet-stream"] {
+        let mut body = request(Operation::PrintJob, 40, &[("document-format", Value::mime(format))]);
+        body.extend(&jpeg);
+        let mut c = Client::connect(addr);
+        c.send(b"POST /ipp/print HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n");
+        c.send(&chunked(&body, 500));
+        let msg = ipp(&c.response());
+        assert_eq!(msg.code, StatusCode::SuccessfulOk as u16, "{format}");
+    }
+    let shown = shown.lock().unwrap();
+    assert_eq!(shown.len(), 2);
+    let page = &shown[1];
+    // Rotated: portrait, and the bright left edge is now along the top.
+    assert_eq!((page.width, page.height), (80, 160));
+    assert!(page.row(5).iter().all(|&p| p > 200));
+    assert!(page.row(150).iter().all(|&p| p < 60));
+}
+
+#[test]
+fn progressive_jpeg_is_rejected() {
+    let (addr, shown) = showing_server();
+    let mut jpeg = Vec::new();
+    let mut enc = jpeg_encoder::Encoder::new(&mut jpeg, 90);
+    enc.set_progressive(true);
+    enc.encode(&[128u8; 64 * 64], 64, 64, jpeg_encoder::ColorType::Luma).unwrap();
+    let mut body = request(Operation::PrintJob, 41, &[("document-format", Value::mime("image/jpeg"))]);
+    body.extend(&jpeg);
+    let msg = ipp(&Client::connect(addr).post_ipp(&body));
+    assert_eq!(msg.code, StatusCode::ClientErrorDocumentFormatNotSupported as u16);
+    assert!(shown.lock().unwrap().is_empty());
+}

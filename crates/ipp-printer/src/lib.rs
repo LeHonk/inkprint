@@ -28,6 +28,32 @@ use board::Board;
 use ipp_codec::{DelimiterTag, Message, Operation, StatusCode, Value};
 use raster::Format;
 
+/// A document format the printer accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocumentFormat {
+    /// PWG Raster or Apple URF.
+    Raster(Format),
+    Jpeg,
+}
+
+impl DocumentFormat {
+    pub fn from_mime(mime: &str) -> Option<Self> {
+        match mime {
+            "image/jpeg" => Some(DocumentFormat::Jpeg),
+            m => Format::from_mime(m).map(DocumentFormat::Raster),
+        }
+    }
+
+    /// Detects the format from the first bytes, for `application/octet-stream`.
+    pub fn sniff(prefix: &[u8]) -> Option<Self> {
+        if jpeg::sniff(prefix) {
+            Some(DocumentFormat::Jpeg)
+        } else {
+            Format::sniff(prefix).map(DocumentFormat::Raster)
+        }
+    }
+}
+
 /// Static identity of the printer. `uri` is what clients use, e.g.
 /// `ipp://inkplate.local:631/ipp/print`.
 #[derive(Debug, Clone)]
@@ -51,14 +77,15 @@ pub const IMPLEMENTED_OPERATIONS: &[Operation] = Operation::ALL;
 /// (`multiple-operation-time-out`); after that the job is aborted.
 pub const MULTIPLE_OPERATION_TIMEOUT: u32 = 120;
 
-pub const DOCUMENT_FORMATS: &[&str] = &["application/octet-stream", "image/pwg-raster", "image/urf"];
+pub const DOCUMENT_FORMATS: &[&str] = &["application/octet-stream", "image/jpeg", "image/pwg-raster", "image/urf"];
 
 /// Document data still to be received for an accepted job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PendingJob {
     pub job_id: u32,
-    /// `None` for application/octet-stream: sniff the first bytes with [`Format::sniff`].
-    pub format: Option<Format>,
+    /// `None` for application/octet-stream: sniff the first bytes with
+    /// [`DocumentFormat::sniff`].
+    pub format: Option<DocumentFormat>,
     /// More documents may follow (Send-Document with `last-document` false).
     last_document: bool,
     version: (u8, u8),
@@ -191,7 +218,7 @@ impl<B: Board> Printer<B> {
         });
     }
 
-    fn document_format(&self, req: &Message) -> Result<Option<Format>, StatusCode> {
+    fn document_format(&self, req: &Message) -> Result<Option<DocumentFormat>, StatusCode> {
         let mime = req
             .op_attr("document-format")
             .and_then(|a| a.first())
@@ -199,7 +226,7 @@ impl<B: Board> Printer<B> {
             .unwrap_or("application/octet-stream");
         match mime {
             "application/octet-stream" => Ok(None),
-            m => Format::from_mime(m).map(Some).ok_or(StatusCode::ClientErrorDocumentFormatNotSupported),
+            m => DocumentFormat::from_mime(m).map(Some).ok_or(StatusCode::ClientErrorDocumentFormatNotSupported),
         }
     }
 
@@ -508,7 +535,7 @@ mod tests {
         let mut p = printer();
         let req = request(Operation::PrintJob, &[("document-format", Value::mime("image/pwg-raster"))]);
         let Outcome::ReceiveDocument(pending) = p.handle(&req, 5) else { panic!() };
-        assert_eq!(pending.format, Some(Format::Pwg));
+        assert_eq!(pending.format, Some(DocumentFormat::Raster(Format::Pwg)));
 
         let busy = respond(p.handle(&req, 6));
         assert_eq!(busy.code, StatusCode::ServerErrorBusy as u16);
@@ -559,7 +586,7 @@ mod tests {
         assert_eq!(job_state(&mut p, &id), Value::Enum(JobState::Pending as i32));
 
         let Outcome::ReceiveDocument(doc) = send_document(&mut p, &id, false) else { panic!() };
-        assert_eq!(doc.format, Some(Format::Urf));
+        assert_eq!(doc.format, Some(DocumentFormat::Raster(Format::Urf)));
         assert_eq!(job_state(&mut p, &id), Value::Enum(JobState::Processing as i32));
         p.finish_job(doc, Ok(2));
         assert_eq!(job_state(&mut p, &id), Value::Enum(JobState::Pending as i32));
@@ -712,10 +739,10 @@ mod tests {
     }
 
     #[test]
-    fn txt_records_advertise_raster_only() {
+    fn txt_records_advertise_formats() {
         let txt = mdns_txt_records::<Inkplate6>(&printer().config);
         let get = |k: &str| txt.iter().find(|(key, _)| *key == k).map(|(_, v)| v.as_str());
-        assert_eq!(get("pdl"), Some("image/pwg-raster,image/urf"));
+        assert_eq!(get("pdl"), Some("image/jpeg,image/pwg-raster,image/urf"));
         assert_eq!(get("Color"), Some("F"));
         assert!(get("URF").unwrap().contains("RS150-300"));
     }

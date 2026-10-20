@@ -19,8 +19,8 @@ inkplate6color = ["board/inkplate6color"]
 [dependencies]
 board       = { workspace = true }
 ipp-codec   = { workspace = true }
+ipp-http    = { path = "../crates/ipp-http" }
 ipp-printer = { workspace = true }
-raster      = { workspace = true }
 render      = { workspace = true }
 
 http-body-util = "0.1.5"

@@ -12,6 +12,7 @@ Print a recipe from your phone and the panel keeps showing the last page. See
 | `crates/ipp-codec` | IPP message parser/encoder | host + device |
 | `crates/ipp-printer` | Sans-IO printer: operations, jobs, attributes, mDNS TXT | host + device |
 | `crates/raster` | Streaming PWG Raster / URF decoder | host + device |
+| `crates/jpeg` | Streaming baseline JPEG decoder to grayscale lines | host + device |
 | `crates/render` | Last-page capture, auto-crop, fit, rotate, quantize | host + device |
 | `crates/ipp-http` | IPP over HTTP: edge-http handler for the printer | host + device |
 | `crates/setup` | Settings in flash, setup form, captive portal and `/setup` router | host + device |
@@ -102,8 +103,9 @@ ipptool -t ipp://inkplate-xxxx.local:631/ipp/print identify-printer-display.test
 
 `cargo run -p sim --example status_preview` renders the screen to `target/status.png`.
 
-CUPS' `ipp-everywhere.test` passes except for JPEG: IPP Everywhere requires `image/jpeg`,
-which is not supported yet (phones and computers send PWG Raster or URF).
+CUPS' `ipp-everywhere.test` passes. Documents can be PWG Raster, URF or JPEG. JPEG is
+decoded as it streams in, one row of 8×8 blocks at a time, so even 12-megapixel phone
+photos fit in memory; EXIF orientation is applied. Progressive JPEGs are rejected.
 
 The firmware has its own toolchain (`channel = "esp"`) and target, so it sits outside
 the Cargo workspace and depends on the shared crates by path.

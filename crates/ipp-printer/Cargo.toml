@@ -10,4 +10,5 @@ license.workspace      = true
 board     = { workspace = true }
 clock     = { workspace = true }
 ipp-codec = { workspace = true }
+jpeg      = { workspace = true }
 raster    = { workspace = true }

@@ -18,9 +18,8 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use ipp_codec::Message;
-use ipp_printer::{Config, JobError, Outcome, Printer};
-use raster::{Decoder, Format};
-use render::PageCapture;
+use ipp_http::{DocumentSink, ShowLastPage};
+use ipp_printer::{Config, Outcome, Printer};
 use tokio::net::TcpListener;
 
 /// Largest IPP attribute section we buffer before the document data.
@@ -132,16 +131,20 @@ async fn handle(req: Request<Incoming>, state: Arc<Mutex<State>>) -> Result<Resp
         Outcome::ReceiveDocument(p) => p,
     };
 
-    let result = receive_document(pending.format, rest, &mut body).await;
-    let result = result.map(|capture| {
-        let pages = capture.pages_seen;
-        if let Some(page) = capture.last_page()
-            && let Err(e) = save_panel_preview::<Selected>(page)
-        {
-            eprintln!("writing {OUTPUT}: {e}");
-        }
-        pages
-    });
+    // The device's decoding path (ipp-http's ShowLastPage), on the whole body: buffering
+    // is fine on a PC.
+    let mut document = rest;
+    while let Some(chunk) = next_data(&mut body).await {
+        document.extend_from_slice(&chunk);
+    }
+    let last_page = std::sync::Mutex::new(None);
+    let sink = ShowLastPage { max_width: CAPTURE_MAX_WIDTH, show: |page| *last_page.lock().unwrap() = Some(page) };
+    let result = sink.print(&pending, &document, &mut &[][..]).await;
+    if let Some(page) = last_page.into_inner().unwrap()
+        && let Err(e) = save_panel_preview::<Selected>(&page)
+    {
+        eprintln!("writing {OUTPUT}: {e}");
+    }
     println!("job {}: {result:?}", pending.job_id);
     let resp = state.lock().unwrap().printer.finish_job(pending, result);
     Ok(ipp_reply(&resp))
@@ -154,38 +157,6 @@ async fn next_data(body: &mut Incoming) -> Option<Bytes> {
         }
     }
     None
-}
-
-async fn receive_document(
-    format: Option<Format>,
-    first: Vec<u8>,
-    body: &mut Incoming,
-) -> Result<PageCapture, JobError> {
-    let mut capture = PageCapture::new(CAPTURE_MAX_WIDTH);
-    // For application/octet-stream, sniff the format from the first bytes.
-    let mut pending = first;
-    let format = match format {
-        Some(f) => f,
-        None => loop {
-            if let Some(f) = Format::sniff(&pending) {
-                break f;
-            }
-            if pending.len() >= 8 {
-                return Err(JobError::UnsupportedFormat);
-            }
-            match next_data(body).await {
-                Some(chunk) => pending.extend_from_slice(&chunk),
-                None => return Err(JobError::UnsupportedFormat),
-            }
-        },
-    };
-    let mut decoder = Decoder::new(format);
-    decoder.push(&pending, &mut capture).map_err(|_| JobError::Malformed)?;
-    while let Some(chunk) = next_data(body).await {
-        decoder.push(&chunk, &mut capture).map_err(|_| JobError::Malformed)?;
-    }
-    decoder.finish().map_err(|_| JobError::Malformed)?;
-    Ok(capture)
 }
 
 /// Writes what the panel would show: cropped, fitted, rotated and quantized.

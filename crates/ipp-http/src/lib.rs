@@ -32,7 +32,9 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embedded_io_async::{Read, Write};
 use ipp_codec::Message;
 use ipp_printer::{JobError, Outcome, PendingJob, Printer};
-use raster::{Decoder, Format};
+use ipp_printer::DocumentFormat;
+use jpeg::Orientation;
+use raster::Decoder;
 use render::{GrayImage, PageCapture};
 
 /// Resource path of the printer, as in `printer-uri` and the mDNS `rp` key.
@@ -70,7 +72,8 @@ impl DocumentSink for DiscardDocuments {
     }
 }
 
-/// Decodes PWG Raster / URF documents and passes the last page to `show`.
+/// Decodes PWG Raster, URF and JPEG documents and passes the last page to `show`, upright
+/// (JPEG EXIF orientation applied).
 ///
 /// Pages are captured box-downsampled to at most `max_width` pixels wide; only the page
 /// being decoded and the last completed one are in memory.
@@ -85,13 +88,20 @@ impl<F: Fn(GrayImage)> DocumentSink for ShowLastPage<F> {
         let mut buf = [0u8; 1024];
         let read = async |rest: &mut R, buf: &mut [u8]| rest.read(buf).await.map_err(|_| JobError::Aborted);
 
-        // application/octet-stream: sniff the format from the first bytes. A body without
-        // any data (Send-Document closing a job) is handled below as 0 pages.
+        // A body without any data (Send-Document closing a job) is 0 pages.
         let mut head = Vec::from(first);
+        if head.is_empty() {
+            let n = read(rest, &mut buf).await?;
+            if n == 0 {
+                return Ok(0);
+            }
+            head.extend_from_slice(&buf[..n]);
+        }
+        // application/octet-stream: sniff the format from the first bytes.
         let format = match job.format {
             Some(f) => f,
             None => loop {
-                if let Some(f) = Format::sniff(&head) {
+                if let Some(f) = DocumentFormat::sniff(&head) {
                     break f;
                 }
                 if head.len() >= 8 {
@@ -99,35 +109,53 @@ impl<F: Fn(GrayImage)> DocumentSink for ShowLastPage<F> {
                 }
                 let n = read(rest, &mut buf).await?;
                 if n == 0 {
-                    return if head.is_empty() { Ok(0) } else { Err(JobError::UnsupportedFormat) };
+                    return Err(JobError::UnsupportedFormat);
                 }
                 head.extend_from_slice(&buf[..n]);
             },
         };
 
-        let mut decoder = Decoder::new(format);
-        let bad = |e| {
-            log::warn!("job {}: raster error {e:?}", job.job_id);
-            JobError::Malformed
-        };
-        let mut total = head.len();
-        decoder.push(&head, &mut capture).map_err(bad)?;
-        drop(head);
-        loop {
-            let n = read(rest, &mut buf).await?;
-            if n == 0 {
-                break;
+        let orientation = match format {
+            DocumentFormat::Jpeg => {
+                let decoded = jpeg::decode(&head, rest, &mut capture).await.map_err(|e| {
+                    log::warn!("job {}: JPEG: {e:?}", job.job_id);
+                    match e {
+                        jpeg::Error::Io => JobError::Aborted,
+                        jpeg::Error::NotJpeg | jpeg::Error::Unsupported(_) => JobError::UnsupportedFormat,
+                        jpeg::Error::Malformed(_) => JobError::Malformed,
+                    }
+                })?;
+                log::info!("job {}: JPEG {}x{}, {:?}", job.job_id, decoded.width, decoded.height, decoded.orientation);
+                decoded.orientation
             }
-            total += n;
-            decoder.push(&buf[..n], &mut capture).map_err(bad)?;
-        }
-        if total == 0 {
-            return Ok(0);
-        }
-        decoder.finish().map_err(bad)?;
+            DocumentFormat::Raster(format) => {
+                let mut decoder = Decoder::new(format);
+                let bad = |e| {
+                    log::warn!("job {}: raster error {e:?}", job.job_id);
+                    JobError::Malformed
+                };
+                decoder.push(&head, &mut capture).map_err(bad)?;
+                drop(head);
+                loop {
+                    let n = read(rest, &mut buf).await?;
+                    if n == 0 {
+                        break;
+                    }
+                    decoder.push(&buf[..n], &mut capture).map_err(bad)?;
+                }
+                decoder.finish().map_err(bad)?;
+                Orientation::Normal
+            }
+        };
 
         let pages = capture.pages_seen;
         let page = capture.take_last_page().ok_or(JobError::Malformed)?;
+        let page = match orientation {
+            Orientation::Normal => page,
+            Orientation::Rotate90 => page.rotate_cw90(),
+            Orientation::Rotate180 => page.rotate_cw90().rotate_cw90(),
+            Orientation::Rotate270 => page.rotate_cw90().rotate_cw90().rotate_cw90(),
+        };
         log::info!("job {}: {pages} page(s), last {}x{}", job.job_id, page.width, page.height);
         (self.show)(page);
         Ok(pages)

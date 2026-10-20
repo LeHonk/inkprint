@@ -140,6 +140,12 @@ pub fn printer_attributes<B: Board>(config: &Config, status: PrinterStatus) -> G
     // Document formats.
     g.push("document-format-default", [Value::mime("application/octet-stream")]);
     g.push("document-format-supported", DOCUMENT_FORMATS.iter().map(|m| Value::mime(m)).collect::<Vec<_>>());
+    // JPEG is decoded as it streams in, so file size is not limited; progressive,
+    // arithmetic-coded and CMYK files are not supported.
+    g.push("jpeg-k-octets-supported", [Value::Range { lower: 0, upper: i32::MAX }]);
+    g.push("jpeg-x-dimension-supported", [Value::Range { lower: 1, upper: i32::from(jpeg::MAX_DIMENSION) }]);
+    g.push("jpeg-y-dimension-supported", [Value::Range { lower: 1, upper: i32::from(jpeg::MAX_DIMENSION) }]);
+    g.push("jpeg-features-supported", keywords(&["none"]));
     let res: Vec<Value> = B::RESOLUTIONS.iter().map(|&r| Value::dpi(r as i32, r as i32)).collect();
     g.push("pwg-raster-document-resolution-supported", res.clone());
     g.push("pwg-raster-document-type-supported", keywords(if color { &["sgray_8", "srgb_8"] } else { &["sgray_8"] }));
@@ -212,7 +218,7 @@ pub fn mdns_txt_records<B: Board>(config: &Config) -> Vec<(&'static str, String)
         ("rp", String::from(rp)),
         ("ty", format!("Soldered {}", B::MODEL)),
         ("product", format!("({})", B::MODEL)),
-        ("pdl", String::from("image/pwg-raster,image/urf")),
+        ("pdl", String::from("image/jpeg,image/pwg-raster,image/urf")),
         ("URF", urf_supported::<B>().join(",")),
         ("Color", yes_no(B::is_color())),
         ("Duplex", yes_no(false)),

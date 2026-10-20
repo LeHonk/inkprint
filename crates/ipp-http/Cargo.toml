@@ -14,6 +14,7 @@ embassy-sync      = "0.8.0"
 embedded-io-async = "0.7.0"
 ipp-codec         = { workspace = true }
 ipp-printer       = { workspace = true }
+jpeg              = { workspace = true }
 log               = { workspace = true }
 raster            = { workspace = true }
 render            = { workspace = true }
@@ -22,6 +23,7 @@ render            = { workspace = true }
 async-io     = "2.6.0"
 board        = { workspace = true, features = ["inkplate6"] }
 edge-nal-std = "0.7.0"
+jpeg-encoder = "0.7.1"
 render       = { workspace = true }
 # Time driver for edge-nal's timeouts on the host.
 embassy-time = { version = "0.5.1", features = ["generic-queue-8", "std"] }

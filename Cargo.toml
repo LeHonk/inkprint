@@ -17,6 +17,7 @@ board        = { path = "crates/board", default-features = false }
 clock        = { path = "crates/clock" }
 ipp-codec    = { path = "crates/ipp-codec" }
 ipp-printer  = { path = "crates/ipp-printer" }
+jpeg         = { path = "crates/jpeg" }
 raster       = { path = "crates/raster" }
 render       = { path = "crates/render" }
 epd-inkplate = { path = "epd-inkplate" }

@@ -1575,6 +1575,7 @@ dependencies = [
  "embedded-io-async 0.7.0",
  "ipp-codec",
  "ipp-printer",
+ "jpeg",
  "log",
  "raster",
  "render",
@@ -1587,6 +1588,7 @@ dependencies = [
  "board",
  "clock",
  "ipp-codec",
+ "jpeg",
  "raster",
 ]
 
@@ -1631,6 +1633,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "jpeg"
+version = "0.1.0"
+dependencies = [
+ "embedded-io-async 0.7.0",
+ "raster",
 ]
 
 [[package]]
