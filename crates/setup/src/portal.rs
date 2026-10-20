@@ -28,9 +28,16 @@ pub trait SetupBackend {
     fn current(&self) -> Settings;
     /// Wi-Fi networks to offer, strongest first.
     fn networks(&self) -> Vec<String>;
-    /// Stores the settings and arranges a restart (after the response is sent).
-    /// Errors are shown to the user.
-    fn save(&self, settings: &Settings) -> Result<(), &'static str>;
+    /// Stores the settings. Returns whether the device restarts to apply them (after the
+    /// response is sent); otherwise they were applied in place. Errors are shown to the user.
+    fn save(&self, settings: &Settings) -> Result<Restart, &'static str>;
+}
+
+/// Whether saved settings need a restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Restart {
+    Yes,
+    No,
 }
 
 pub struct SetupHandler<B> {
@@ -68,11 +75,16 @@ impl<B: SetupBackend> SetupHandler<B> {
         }
         let body = String::from_utf8_lossy(&body);
         let current = self.backend.current();
-        let result = settings_from_form(&body, &current).and_then(|s| self.backend.save(&s).map(|()| s));
+        let result = settings_from_form(&body, &current).and_then(|s| self.backend.save(&s).map(|r| (s, r)));
         match result {
-            Ok(saved) => {
-                log::info!("setup: saved settings for network {:?}, location {:?}", saved.ssid, saved.location);
-                html(connection, 200, &render_saved(&self.backend.name(), &saved)).await
+            Ok((saved, restart)) => {
+                log::info!(
+                    "setup: saved settings for network {:?}, location {:?}, brightness {}",
+                    saved.ssid,
+                    saved.location,
+                    saved.brightness
+                );
+                html(connection, 200, &render_saved(&self.backend.name(), &saved, restart == Restart::Yes)).await
             }
             Err(message) => html(connection, 400, &self.form(Some(message))).await,
         }

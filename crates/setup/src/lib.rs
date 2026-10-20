@@ -37,11 +37,17 @@ pub struct Settings {
     pub ssid: String,
     pub password: String,
     pub location: String,
+    /// Display brightness step, [`BRIGHTNESS_MIN`] (much darker) … [`BRIGHTNESS_MAX`]
+    /// (much lighter); 0 is normal.
+    pub brightness: i8,
 }
+
+pub const BRIGHTNESS_MIN: i8 = -2;
+pub const BRIGHTNESS_MAX: i8 = 2;
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { ssid: String::new(), password: String::new(), location: String::from(DEFAULT_LOCATION) }
+        Self { ssid: String::new(), password: String::new(), location: String::from(DEFAULT_LOCATION), brightness: 0 }
     }
 }
 
@@ -68,16 +74,21 @@ impl Settings {
         if self.location.len() > MAX_LOCATION {
             return Err("The location is too long (at most 63 bytes).");
         }
+        if !(BRIGHTNESS_MIN..=BRIGHTNESS_MAX).contains(&self.brightness) {
+            return Err("Choose a brightness from the list.");
+        }
         Ok(())
     }
 }
 
 const MAGIC: &[u8; 4] = b"INKS";
-const VERSION: u8 = 1;
-/// Upper bound of an encoded record: header, three length-prefixed fields, CRC.
-const RECORD_MAX: usize = 4 + 1 + 3 * (1 + 255) + 4;
+/// Version 2 adds the brightness byte; version 1 records still load (brightness 0).
+const VERSION: u8 = 2;
+/// Upper bound of an encoded record: header, three length-prefixed fields, brightness, CRC.
+const RECORD_MAX: usize = 4 + 1 + 3 * (1 + 255) + 1 + 4;
 
-/// `MAGIC, VERSION, (len u8, bytes) × 3 [ssid, password, location], CRC-32 (LE)`.
+/// `MAGIC, VERSION, (len u8, bytes) × 3 [ssid, password, location], brightness i8,
+/// CRC-32 (LE)`.
 fn encode(s: &Settings) -> Vec<u8> {
     let mut out = Vec::with_capacity(RECORD_MAX);
     out.extend_from_slice(MAGIC);
@@ -86,12 +97,14 @@ fn encode(s: &Settings) -> Vec<u8> {
         out.push(field.len() as u8);
         out.extend_from_slice(field.as_bytes());
     }
+    out.push(s.brightness as u8);
     out.extend_from_slice(&crc32(&out).to_le_bytes());
     out
 }
 
 fn decode(bytes: &[u8]) -> Option<Settings> {
-    if bytes.get(..4)? != MAGIC || *bytes.get(4)? != VERSION {
+    let version = *bytes.get(4)?;
+    if bytes.get(..4)? != MAGIC || !(1..=VERSION).contains(&version) {
         return None;
     }
     let mut pos = 5;
@@ -102,12 +115,17 @@ fn decode(bytes: &[u8]) -> Option<Settings> {
         *field = String::from(core::str::from_utf8(data).ok()?);
         pos += 1 + len;
     }
+    let mut brightness = 0;
+    if version >= 2 {
+        brightness = (*bytes.get(pos)? as i8).clamp(BRIGHTNESS_MIN, BRIGHTNESS_MAX);
+        pos += 1;
+    }
     let crc = u32::from_le_bytes(bytes.get(pos..pos + 4)?.try_into().ok()?);
     if crc != crc32(&bytes[..pos]) {
         return None;
     }
     let [ssid, password, location] = fields;
-    Some(Settings { ssid, password, location })
+    Some(Settings { ssid, password, location, brightness })
 }
 
 /// Reads the settings record at offset 0. `Ok(None)` if the region holds no valid record
@@ -198,7 +216,7 @@ pub(crate) mod tests {
     }
 
     pub fn settings() -> Settings {
-        Settings { ssid: "Home Wi-Fi".into(), password: "correct horse".into(), location: "Kök".into() }
+        Settings { ssid: "Home Wi-Fi".into(), password: "correct horse".into(), location: "Kök".into(), brightness: 1 }
     }
 
     #[test]
@@ -211,6 +229,22 @@ pub(crate) mod tests {
         other.location = "Hall".into();
         save(&mut flash, &other).unwrap();
         assert_eq!(load(&mut flash).unwrap(), Some(other));
+    }
+
+    #[test]
+    fn version_1_records_still_load() {
+        // A record as the first firmware with settings wrote it (no brightness byte).
+        let mut v1 = Vec::from(&MAGIC[..]);
+        v1.push(1);
+        for field in ["Home", "secret123", "Kitchen"] {
+            v1.push(field.len() as u8);
+            v1.extend_from_slice(field.as_bytes());
+        }
+        v1.extend_from_slice(&crc32(&v1).to_le_bytes());
+        let mut flash = RamFlash(vec![0xFF; 4096]);
+        flash.0[..v1.len()].copy_from_slice(&v1);
+        let loaded = load(&mut flash).unwrap().unwrap();
+        assert_eq!(loaded, Settings { ssid: "Home".into(), password: "secret123".into(), location: "Kitchen".into(), brightness: 0 });
     }
 
     #[test]
@@ -235,6 +269,7 @@ pub(crate) mod tests {
         assert!(with(|s| s.password = "short".into()).is_err());
         assert_eq!(with(|s| s.password.clear()), Ok(())); // open network
         assert!(with(|s| s.location = "  ".into()).is_err());
+        assert!(with(|s| s.brightness = 3).is_err());
     }
 
     #[test]

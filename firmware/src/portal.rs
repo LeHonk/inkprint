@@ -35,6 +35,7 @@ const HTTP_TASKS: usize = 2;
 /// Runs setup mode until the settings are saved (the reboot task restarts) or, when
 /// settings exist, until [`SETUP_TIMEOUT`].
 pub async fn run(spawner: Spawner, mut controller: WifiController<'static>, identity: &'static Identity, seed: u64, show_screen: bool) -> ! {
+    device::enter_setup_mode();
     let networks: &'static [String] = scan(&mut controller).await.leak();
     info!("setup: {} networks found", networks.len());
 

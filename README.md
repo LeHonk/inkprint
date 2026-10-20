@@ -53,6 +53,8 @@ restarts and joins your network.
 - Settings are kept in flash (the `nvs` partition) across restarts and firmware updates.
 - To change them later, open `http://inkplate-xxxx.local:631/setup` on your network.
   Leave the password empty to keep the current one, e.g. to change only the location.
+- Brightness (Much darker … Much lighter) adjusts photos and gray areas; black text stays
+  black. It is applied to the page on display right away, without a restart.
 - If the saved network can't be joined for 3 minutes (new router, changed password),
   the printer restarts into setup mode without touching the panel, so the page on it
   stays. After 10 minutes without changes it tries the saved network again.

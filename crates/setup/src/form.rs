@@ -4,7 +4,10 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::Settings;
+use crate::{BRIGHTNESS_MAX, BRIGHTNESS_MIN, Settings};
+
+/// Labels for brightness steps -2 … +2.
+const BRIGHTNESS_LABELS: [&str; 5] = ["Much darker", "Darker", "Normal", "Lighter", "Much lighter"];
 
 /// Path of the form, for both GET (show) and POST (save).
 pub const SETUP_PATH: &str = "/setup";
@@ -57,7 +60,11 @@ pub fn settings_from_form(body: &str, current: &Settings) -> Result<Settings, &'
     if password.is_empty() && ssid == current.ssid && get("open") != "on" {
         password = current.password.clone();
     }
-    let settings = Settings { ssid: ssid.into(), password, location: get("location").trim().into() };
+    let brightness = match get("brightness") {
+        "" => current.brightness,
+        v => v.parse().map_err(|_| "Choose a brightness from the list.")?,
+    };
+    let settings = Settings { ssid: ssid.into(), password, location: get("location").trim().into(), brightness };
     settings.validate()?;
     Ok(settings)
 }
@@ -129,22 +136,36 @@ pub fn render_form(name: &str, current: &Settings, networks: &[String], error: O
          <input name=\"location\" maxlength=\"63\" value=\"{}\"></label>",
         escape(&current.location)
     );
-    body += "<button type=\"submit\">Save and restart</button></form>";
+    body += "<label>Brightness <span class=\"hint\">(photos and gray areas; black text \
+             stays black)</span><select name=\"brightness\">";
+    for (level, label) in (BRIGHTNESS_MIN..=BRIGHTNESS_MAX).zip(BRIGHTNESS_LABELS) {
+        let selected = if level == current.brightness { " selected" } else { "" };
+        body += &format!("<option value=\"{level}\"{selected}>{label}</option>");
+    }
+    body += "</select></label>";
+    body += "<button type=\"submit\">Save</button></form>\
+             <p class=\"hint\">Changing the network or location restarts the printer; \
+             brightness is applied to the page on display right away.</p>";
     page(&format!("{name} setup"), &body)
 }
 
-/// Shown after saving, just before the printer restarts.
-pub fn render_saved(name: &str, settings: &Settings) -> String {
-    page(
-        &format!("{name} setup"),
-        &format!(
+/// Shown after saving. `restarting`: the printer restarts to apply the settings (network or
+/// location changed); otherwise they were applied in place.
+pub fn render_saved(name: &str, settings: &Settings, restarting: bool) -> String {
+    let body = if restarting {
+        format!(
             "<p>Saved. The printer restarts now and joins <b>{}</b>.</p>\
-             <p>Reconnect this device to your usual network. The printer then appears in \
-             print dialogs, located in <b>{}</b>.</p>",
+             <p>If this device was connected to the printer's own setup network, reconnect it \
+             to your usual network. The printer then appears in print dialogs, located in \
+             <b>{}</b>.</p>",
             escape(&settings.ssid),
             escape(&settings.location)
-        ),
-    )
+        )
+    } else {
+        let label = BRIGHTNESS_LABELS[(settings.brightness - BRIGHTNESS_MIN) as usize];
+        format!("<p>Saved. Brightness <b>{label}</b> is applied to the page on display.</p><p><a href=\"{SETUP_PATH}\">Back</a></p>")
+    };
+    page(&format!("{name} setup"), &body)
 }
 
 #[cfg(test)]
@@ -152,7 +173,7 @@ mod tests {
     use super::*;
 
     fn current() -> Settings {
-        Settings { ssid: "Home".into(), password: "secret123".into(), location: "Kitchen".into() }
+        Settings { ssid: "Home".into(), password: "secret123".into(), location: "Kitchen".into(), brightness: 0 }
     }
 
     #[test]
@@ -179,6 +200,13 @@ mod tests {
         // Explicitly open network on the same SSID.
         let s = settings_from_form("ssid=Home&password=&open=on&location=Hall", &current()).unwrap();
         assert_eq!(s.password, "");
+        // Brightness: from the form, kept when absent, rejected when invalid.
+        let s = settings_from_form("ssid=Home&location=Kitchen&brightness=2", &current()).unwrap();
+        assert_eq!(s.brightness, 2);
+        let s = settings_from_form("ssid=Home&location=Kitchen", &Settings { brightness: -1, ..current() }).unwrap();
+        assert_eq!(s.brightness, -1);
+        assert!(settings_from_form("ssid=Home&location=Kitchen&brightness=7", &current()).is_err());
+        assert!(settings_from_form("ssid=Home&location=Kitchen&brightness=x", &current()).is_err());
         // Validation errors come back as messages.
         assert!(settings_from_form("ssid=Home&password=short&location=Hall", &current()).is_err());
         assert!(settings_from_form("ssid=&location=Hall", &Settings::default()).is_err());
@@ -193,6 +221,8 @@ mod tests {
         assert!(html.contains("Oops &lt;b&gt;"));
         assert!(html.contains("<option value=\"Home\" selected>Home</option>"));
         assert!(html.contains("<option value=\"Neighbour\">"));
+        assert!(html.contains("<option value=\"0\" selected>Normal</option>"));
+        assert!(html.contains("<option value=\"2\">Much lighter</option>"));
         assert!(!html.contains("secret123"));
     }
 }

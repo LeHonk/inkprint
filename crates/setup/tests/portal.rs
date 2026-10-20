@@ -8,7 +8,7 @@ use std::time::Duration;
 use edge_http::io::server::{Connection, Handler, Server};
 use edge_nal::{TcpBind, TcpSplit};
 use setup::Settings;
-use setup::portal::{SetupBackend, SetupHandler, WithSetup};
+use setup::portal::{Restart, SetupBackend, SetupHandler, WithSetup};
 
 #[derive(Clone, Default)]
 struct Backend {
@@ -20,14 +20,17 @@ impl SetupBackend for Backend {
         "Inkplate 6 (a1b2)".into()
     }
     fn current(&self) -> Settings {
-        Settings { ssid: "Home".into(), password: "secret123".into(), location: "Kitchen".into() }
+        Settings { ssid: "Home".into(), password: "secret123".into(), location: "Kitchen".into(), brightness: 0 }
     }
     fn networks(&self) -> Vec<String> {
         vec!["Home".into(), "Neighbour".into()]
     }
-    fn save(&self, settings: &Settings) -> Result<(), &'static str> {
+    /// Like the device: only a brightness change applies without a restart.
+    fn save(&self, settings: &Settings) -> Result<Restart, &'static str> {
         self.saved.lock().unwrap().push(settings.clone());
-        Ok(())
+        let current = self.current();
+        let same = settings.ssid == current.ssid && settings.password == current.password && settings.location == current.location;
+        Ok(if same { Restart::No } else { Restart::Yes })
     }
 }
 
@@ -113,7 +116,7 @@ fn captive_portal_answers_probes_and_saves() {
     assert_eq!(status, 200);
     assert!(body.contains("joins <b>Neighbour</b>") && body.contains("<b>Hall</b>"), "{body}");
     let saved = backend.saved.lock().unwrap().clone();
-    assert_eq!(saved, [Settings { ssid: "Neighbour".into(), password: "hunter2hunter2".into(), location: "Hall".into() }]);
+    assert_eq!(saved, [Settings { ssid: "Neighbour".into(), password: "hunter2hunter2".into(), location: "Hall".into(), brightness: 0 }]);
 }
 
 #[test]
@@ -141,5 +144,16 @@ fn lan_router_serves_setup_and_passes_the_rest_on() {
     let (status, _) = request(addr, &post("/setup", "ssid=Home&ssid_other=&password=&location=Pantry"));
     assert_eq!(status, 200);
     let saved = backend.saved.lock().unwrap().clone();
-    assert_eq!(saved, [Settings { ssid: "Home".into(), password: "secret123".into(), location: "Pantry".into() }]);
+    assert_eq!(saved, [Settings { ssid: "Home".into(), password: "secret123".into(), location: "Pantry".into(), brightness: 0 }]);
+}
+
+#[test]
+fn brightness_only_change_applies_without_restart() {
+    let backend = Backend::default();
+    let addr = serve(WithSetup { setup: SetupHandler::lan(backend.clone()), other: Other });
+    let (status, body) = request(addr, &post("/setup", "ssid=Home&ssid_other=&password=&location=Kitchen&brightness=2"));
+    assert_eq!(status, 200);
+    assert!(body.contains("Brightness <b>Much lighter</b> is applied"), "{body}");
+    assert!(!body.contains("restarts"), "{body}");
+    assert_eq!(backend.saved.lock().unwrap()[0].brightness, 2);
 }

@@ -3,6 +3,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::cell::RefCell;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -11,7 +12,7 @@ use embassy_time::{Duration, Timer};
 use esp_bootloader_esp_idf::partitions::{self, DataPartitionSubType, PARTITION_TABLE_MAX_LEN, PartitionType};
 use esp_storage::FlashStorage;
 use log::{info, warn};
-use setup::portal::SetupBackend;
+use setup::portal::{Restart, SetupBackend};
 use setup::{FlashRegion, Settings};
 
 /// The `nvs` partition; settings live in its first sector.
@@ -49,8 +50,20 @@ pub fn current() -> Settings {
     CURRENT.lock(|c| c.borrow().clone()).unwrap_or_default()
 }
 
-/// Writes settings to flash and schedules a restart to apply them.
-pub fn save(settings: &Settings) -> Result<(), &'static str> {
+/// Set while the setup access point runs: saving must then always restart.
+static SETUP_MODE: AtomicBool = AtomicBool::new(false);
+
+pub fn enter_setup_mode() {
+    SETUP_MODE.store(true, Ordering::Relaxed);
+}
+
+/// The display should redraw the page on display (brightness changed).
+pub static REDRAW: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Writes settings to flash. A brightness-only change in normal operation is applied in
+/// place by redrawing; anything else schedules a restart.
+pub fn save(settings: &Settings) -> Result<Restart, &'static str> {
+    let previous = current();
     STORE.lock(|s| match s.borrow_mut().as_mut() {
         Some(store) => setup::save(store, settings).map_err(|e| {
             warn!("settings: flash write failed: {e:?}");
@@ -59,8 +72,14 @@ pub fn save(settings: &Settings) -> Result<(), &'static str> {
         None => Err("This device has no settings partition."),
     })?;
     set_current(settings.clone());
-    REBOOT.signal(());
-    Ok(())
+    let same_network = settings.ssid == previous.ssid && settings.password == previous.password;
+    if same_network && settings.location == previous.location && !SETUP_MODE.load(Ordering::Relaxed) {
+        REDRAW.signal(());
+        Ok(Restart::No)
+    } else {
+        REBOOT.signal(());
+        Ok(Restart::Yes)
+    }
 }
 
 /// Survives a software reset (not power-on: then it holds garbage, hence the magic).
@@ -117,7 +136,7 @@ impl SetupBackend for DeviceSetup {
         self.networks.to_vec()
     }
 
-    fn save(&self, settings: &Settings) -> Result<(), &'static str> {
+    fn save(&self, settings: &Settings) -> Result<Restart, &'static str> {
         save(settings)
     }
 }
