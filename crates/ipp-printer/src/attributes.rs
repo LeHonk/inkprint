@@ -56,29 +56,22 @@ pub struct PrinterStatus {
     pub queued: usize,
     /// Uptime of the last printer-state change.
     pub state_changed: u32,
+    /// Unix time at uptime 0, once known (RTC or NTP).
+    pub boot_unix: Option<u64>,
 }
 
-/// `dateTime` (RFC 2579) for an uptime in seconds. There is no clock yet (no RTC or NTP),
-/// so times count from 1970-01-01T00:00:00Z at boot.
-fn date_time(uptime: u32) -> Value {
-    let days = uptime / 86_400;
-    let secs = uptime % 86_400;
-    // Days since the epoch → civil date (Howard Hinnant's algorithm).
-    let z = days as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = (doy - (153 * mp + 2) / 5 + 1) as u8;
-    let month = (if mp < 10 { mp + 3 } else { mp - 9 }) as u8;
-    let year = (yoe + era * 400 + i64::from(month <= 2)) as u16;
-    let [y0, y1] = year.to_be_bytes();
-    Value::DateTime([y0, y1, month, day, (secs / 3600) as u8, (secs / 60 % 60) as u8, (secs % 60) as u8, 0, b'+', 0, 0])
+impl PrinterStatus {
+    /// `dateTime` (RFC 2579, UTC) for an uptime. Without a wall clock, times count from
+    /// 1970-01-01T00:00:00Z at boot.
+    fn date_time(&self, uptime: u32) -> Value {
+        let t = clock::DateTime::from_unix(self.boot_unix.unwrap_or(0) + u64::from(uptime));
+        let [y0, y1] = t.year.to_be_bytes();
+        Value::DateTime([y0, y1, t.month, t.day, t.hour, t.minute, t.second, 0, b'+', 0, 0])
+    }
 }
 
 pub fn printer_attributes<B: Board>(config: &Config, status: PrinterStatus) -> Group {
-    let PrinterStatus { now, busy, queued, state_changed } = status;
+    let PrinterStatus { now, busy, queued, state_changed, .. } = status;
     let mut g = Group::new(DelimiterTag::Printer);
     let color = B::is_color();
 
@@ -101,11 +94,11 @@ pub fn printer_attributes<B: Board>(config: &Config, status: PrinterStatus) -> G
     g.push("printer-state-reasons", keywords(&["none"]));
     g.push("printer-is-accepting-jobs", [Value::Boolean(true)]);
     g.push("printer-up-time", [Value::Integer(now.max(1) as i32)]);
-    g.push("printer-current-time", [date_time(now)]);
+    g.push("printer-current-time", [status.date_time(now)]);
     g.push("printer-config-change-time", [Value::Integer(0)]);
-    g.push("printer-config-change-date-time", [date_time(0)]);
+    g.push("printer-config-change-date-time", [status.date_time(0)]);
     g.push("printer-state-change-time", [Value::Integer(state_changed as i32)]);
-    g.push("printer-state-change-date-time", [date_time(state_changed)]);
+    g.push("printer-state-change-date-time", [status.date_time(state_changed)]);
     g.push("queued-job-count", [Value::Integer(queued as i32)]);
     g.push("printer-kind", keywords(&["document"]));
     g.push("printer-device-id", [Value::text(&format!("MFG:Soldered;MDL:{};CMD:PWGRaster,URF;", B::MODEL))]);
@@ -236,10 +229,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn date_time_from_uptime() {
-        assert_eq!(date_time(0), Value::DateTime([0x07, 0xB2, 1, 1, 0, 0, 0, 0, b'+', 0, 0]));
-        // 1972-03-01 is after a leap day: 2 × 365 + 31 + 29 days.
-        let t = (2 * 365 + 31 + 29) * 86_400 + 3_661;
-        assert_eq!(date_time(t), Value::DateTime([0x07, 0xB4, 3, 1, 1, 1, 1, 0, b'+', 0, 0]));
+    fn date_time_uses_wall_clock_when_known() {
+        let mut status = PrinterStatus { now: 0, busy: false, queued: 0, state_changed: 0, boot_unix: None };
+        assert_eq!(status.date_time(0), Value::DateTime([0x07, 0xB2, 1, 1, 0, 0, 0, 0, b'+', 0, 0]));
+        // Booted 2026-10-19T19:41:01Z; one hour, one minute and one second later.
+        status.boot_unix = Some(1_792_438_861);
+        assert_eq!(status.date_time(3_661), Value::DateTime([0x07, 0xEA, 10, 19, 20, 42, 2, 0, b'+', 0, 0]));
     }
 }

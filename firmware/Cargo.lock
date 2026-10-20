@@ -139,6 +139,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
+name = "clock"
+version = "0.1.0"
+
+[[package]]
 name = "const-default"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -580,7 +584,7 @@ dependencies = [
  "heapless 0.9.3",
  "log",
  "managed",
- "smoltcp 0.13.1",
+ "smoltcp",
 ]
 
 [[package]]
@@ -725,6 +729,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-hal-bus"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "513e0b3a8fb7d3013a8ae17a834283f170deaf7d0eeab0a7c1a36ad4dd356d22"
+dependencies = [
+ "critical-section",
+ "embedded-hal 1.0.0",
+]
+
+[[package]]
 name = "embedded-io"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -814,6 +828,7 @@ name = "epd-inkplate"
 version = "0.1.0"
 dependencies = [
  "board",
+ "clock",
  "embedded-hal 1.0.0",
 ]
 
@@ -1492,6 +1507,7 @@ name = "inkprint-firmware"
 version = "0.1.0"
 dependencies = [
  "board",
+ "clock",
  "critical-section",
  "dnssd",
  "edge-captive",
@@ -1505,6 +1521,8 @@ dependencies = [
  "embassy-net",
  "embassy-sync 0.8.0",
  "embassy-time",
+ "embedded-hal 1.0.0",
+ "embedded-hal-bus",
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
  "embedded-storage",
@@ -1526,7 +1544,6 @@ dependencies = [
  "raster",
  "render",
  "setup",
- "smoltcp 0.14.0",
  "static_cell",
 ]
 
@@ -1568,6 +1585,7 @@ name = "ipp-printer"
 version = "0.1.0"
 dependencies = [
  "board",
+ "clock",
  "ipp-codec",
  "raster",
 ]
@@ -2108,20 +2126,6 @@ dependencies = [
  "byteorder",
  "cfg-if",
  "heapless 0.9.3",
- "managed",
-]
-
-[[package]]
-name = "smoltcp"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6f8b28ad56c6e35524a37dd492af5d1a47e31e1a4d175cd12f89c075f01980f"
-dependencies = [
- "bitflags",
- "byteorder",
- "cfg-if",
- "heapless 0.9.3",
- "log",
  "managed",
 ]
 

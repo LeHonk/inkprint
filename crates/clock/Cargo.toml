@@ -1,0 +1,9 @@
+[package]
+name         = "clock"
+description  = "Calendar conversion and the SNTP packet format (no_std)"
+edition.workspace      = true
+version.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+
+[dependencies]

@@ -20,6 +20,7 @@ extern crate alloc;
 pub mod expander;
 pub mod inkplate6;
 pub mod luts;
+pub mod rtc;
 pub mod tps65186;
 
 /// A frame in the panel's native orientation, one byte per pixel, `WIDTH × HEIGHT`, row-major.

@@ -41,8 +41,8 @@ use static_cell::StaticCell;
 pub const IPP_PORT: u16 = 631;
 /// Concurrent HTTP connections (each holds a TCP socket while waiting in accept).
 const HTTP_TASKS: usize = 2;
-/// DHCP + mDNS + HTTP handlers, plus one spare.
-const SOCKETS: usize = HTTP_TASKS + 3;
+/// DHCP + mDNS + DNS + NTP + HTTP handlers, plus one spare.
+const SOCKETS: usize = HTTP_TASKS + 5;
 const MDNS_BUF: usize = 1500;
 
 pub type SharedPrinter = Mutex<CriticalSectionRawMutex, RefCell<Printer<Selected>>>;

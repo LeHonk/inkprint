@@ -37,6 +37,7 @@ log                    = "0.4.27"
 embassy-net = { version = "0.9.1", features = [
   "dhcpv4",
   "dhcpv4-hostname",
+  "dns",
   "log",
   "medium-ethernet",
   "multicast",
@@ -69,22 +70,11 @@ esp-radio = { version = "1.0.0-beta.1", features = [
   "unstable",
   "wifi",
 ] }
-smoltcp = { version = "0.14.0", default-features = false, features = [
-  "log",
-  "medium-ethernet",
-  "multicast",
-  "proto-dhcpv4",
-  "proto-dns",
-  "proto-ipv4",
-  "socket-dns",
-  "socket-icmp",
-  "socket-raw",
-  "socket-tcp",
-  "socket-udp",
-] }
 
 critical-section = "1.2.0"
 # Settings in the nvs partition.
+embedded-hal     = "1.0.0"
+embedded-hal-bus = "0.3.0"
 embedded-storage = "0.3.2"
 esp-storage      = { version = "0.10.0", features = ["embedded-storage", "esp32"] }
 embassy-futures  = "0.1.2"
@@ -95,6 +85,7 @@ esp32            = "0.41.0"
 
 # Shared, host-tested crates.
 board        = { path = "../crates/board", default-features = false }
+clock        = { path = "../crates/clock" }
 dnssd        = { path = "../crates/dnssd" }
 epd-inkplate = { path = "../epd-inkplate" }
 ipp-codec    = { path = "../crates/ipp-codec" }

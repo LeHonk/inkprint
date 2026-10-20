@@ -8,5 +8,6 @@ license.workspace      = true
 
 [dependencies]
 board     = { workspace = true }
+clock     = { workspace = true }
 ipp-codec = { workspace = true }
 raster    = { workspace = true }

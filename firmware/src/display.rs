@@ -10,6 +10,7 @@ use epd_inkplate::inkplate6::Inkplate6Panel;
 use epd_inkplate::{EpdDriver, Frame};
 use esp_hal::Blocking;
 use esp_hal::delay::Delay;
+use embedded_hal_bus::i2c::RefCellDevice;
 use esp_hal::i2c::master::I2c;
 use log::{info, warn};
 use render::GrayImage;
@@ -17,7 +18,7 @@ use render::GrayImage;
 use crate::net::{IDENTIFY, PAGES, TEXT, status_lines};
 use crate::panel_bus::I2sPanelBus;
 
-pub type Panel = Inkplate6Panel<Selected, I2sPanelBus, I2c<'static, Blocking>, Delay>;
+pub type Panel = Inkplate6Panel<Selected, I2sPanelBus, RefCellDevice<'static, I2c<'static, Blocking>>, Delay>;
 
 /// Crop whitespace margins so a page printed on large paper fills the panel.
 const AUTO_CROP: bool = true;

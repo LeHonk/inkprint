@@ -27,6 +27,7 @@ use {
     epd_inkplate::inkplate6::{Inkplate6Board, Inkplate6Panel},
     esp_hal::delay::Delay,
     esp_hal::gpio::Pin,
+    embedded_hal_bus::i2c::RefCellDevice,
     esp_hal::i2c::master::{Config as I2cConfig, I2c},
     inkprint_firmware::panel_bus::{I2sPanelBus, PanelPins},
 };
@@ -81,6 +82,12 @@ async fn main(spawner: Spawner) -> ! {
 
     #[allow(unused_mut, reason = "only boards with a display driver set it")]
     let mut display = false;
+    // The RTC shares the I2C bus with the panel; boards without the Inkplate 6 driver
+    // don't set up the bus yet.
+    #[allow(unused_mut, reason = "only boards with a display driver set it")]
+    let mut rtc: Option<inkprint_firmware::time::Rtc> = None;
+    #[allow(unused_mut, reason = "only boards with a display driver set it")]
+    let mut boot_time: Option<(u64, u32)> = None;
     #[cfg(any(feature = "inkplate6", feature = "inkplate6v2"))]
     {
         recover_i2c_bus(peripherals.GPIO21.reborrow(), peripherals.GPIO22.reborrow());
@@ -89,8 +96,32 @@ async fn main(spawner: Spawner) -> ! {
             .with_sda(peripherals.GPIO21)
             .with_scl(peripherals.GPIO22);
         let found = log_i2c_devices(&mut i2c);
+        // One bus, shared by the panel driver and the RTC. Everything runs on one executor
+        // and I2C transfers are blocking, so transfers never interleave.
+        static I2C_BUS: StaticCell<RefCell<I2c<'static, esp_hal::Blocking>>> = StaticCell::new();
+        let i2c_bus: &'static RefCell<_> = I2C_BUS.init(RefCell::new(i2c));
         if option_env!("INKPRINT_I2C_DIAG").is_some() {
-            i2c_diagnostics(&mut i2c);
+            i2c_diagnostics(i2c_bus);
+        }
+        // Only talk to the RTC if the scan saw it: early Inkplate 6 boards have none, and
+        // the panel failed to initialise with I2C timeouts after the blind probe's NACK.
+        // INKPRINT_RTC_PROBE=always (at build time) restores the blind probe, for testing.
+        let force_probe = option_env!("INKPRINT_RTC_PROBE") == Some("always");
+        if found.contains(&epd_inkplate::rtc::ADDRESS) || force_probe {
+            let mut clock_chip = epd_inkplate::rtc::Pcf85063::new(RefCellDevice::new(i2c_bus));
+            if let Some(now) = inkprint_firmware::time::read_rtc(&mut clock_chip) {
+                if let Some(unix) = now {
+                    boot_time = Some((unix, embassy_time::Instant::now().as_secs() as u32));
+                }
+                rtc = Some(clock_chip);
+            }
+            if force_probe {
+                // Is the bus still usable right after the probe? The IO expander must answer.
+                let ok = i2c_bus.borrow_mut().read(0x20, &mut [0]).is_ok();
+                info!("I2C after RTC probe: expander at 0x20 {}", if ok { "answers" } else { "does NOT answer" });
+            }
+        } else {
+            info!("RTC: none on this board (not found at 0x51); time comes from NTP only");
         }
         let bus = I2sPanelBus::new(
             peripherals.I2S1,
@@ -117,7 +148,7 @@ async fn main(spawner: Spawner) -> ! {
         // Probe the optional external expander only if the scan saw it: the transfer after an
         // expected NACK has been seen to time out on this chip (see i2c_diagnostics).
         let ext_present = found.contains(&<Selected as Inkplate6Board>::VARIANT.ext_address);
-        match Inkplate6Panel::<Selected, _, _, _>::new(bus, i2c, Delay::new(), ext_present) {
+        match Inkplate6Panel::<Selected, _, _, _>::new(bus, RefCellDevice::new(i2c_bus), Delay::new(), ext_present) {
             Ok(mut panel) => {
                 if !panel.has_ext_expander() {
                     info!("no external IO expander found (optional)");
@@ -168,7 +199,7 @@ async fn main(spawner: Spawner) -> ! {
 
     match settings {
         Some(s) if s.has_wifi() && !setup_requested => {
-            start_network(spawner, controller, station, identity, seed, s, display).await;
+            start_network(spawner, controller, station, identity, seed, s, Hardware { display, rtc, boot_time }).await;
         }
         settings => {
             info!("setup mode ({})", if setup_requested { "requested after losing Wi-Fi" } else { "no Wi-Fi settings" });
@@ -184,6 +215,15 @@ async fn main(spawner: Spawner) -> ! {
     }
 }
 
+/// What the board brought up before the network.
+struct Hardware {
+    /// The panel works, so jobs can be shown.
+    display: bool,
+    rtc: Option<inkprint_firmware::time::Rtc>,
+    /// Unix time from the RTC and the uptime it was read at.
+    boot_time: Option<(u64, u32)>,
+}
+
 /// Brings up Wi-Fi and DHCP, then starts mDNS and the IPP server.
 #[allow(clippy::large_stack_frames, reason = "runs once at boot on main's stack, like main")]
 async fn start_network(
@@ -193,13 +233,17 @@ async fn start_network(
     identity: &'static Identity,
     seed: u64,
     settings: setup::Settings,
-    display: bool,
+    hardware: Hardware,
 ) {
+    let Hardware { display, rtc, boot_time } = hardware;
     static PRINTER: StaticCell<SharedPrinter> = StaticCell::new();
 
     let config = identity.printer_config(&settings.location);
     let txt = net::txt_records(&config);
     let printer: &'static SharedPrinter = PRINTER.init(Mutex::new(RefCell::new(Printer::new(config))));
+    if let Some((unix, uptime)) = boot_time {
+        printer.lock(|p| p.borrow_mut().set_wall_clock(unix, uptime));
+    }
     net::publish(identity, printer);
 
     let (stack, runner) = net::stack(interface, net::dhcp_config(identity), seed);
@@ -207,6 +251,7 @@ async fn start_network(
     spawner.spawn(net::wifi_task(controller, ssid, password).expect("spawn wifi"));
     spawner.spawn(net::net_task(runner).expect("spawn net"));
     spawner.spawn(net::connectivity_watchdog(stack).expect("spawn watchdog"));
+    spawner.spawn(inkprint_firmware::time::ntp_task(stack, printer, rtc).expect("spawn ntp"));
 
     stack.wait_config_up().await;
     if let Some(cfg) = stack.config_v4() {
@@ -273,26 +318,36 @@ fn recover_i2c_bus(sda: impl Pin, scl: impl Pin) {
     }
 }
 
-/// The step that failed in panel init was a write to the expander (0x20) right after the
-/// absent second expander (0x22) NACKed. Replays that pair, logging only after each pair (a
-/// log line takes milliseconds): immediately, and with a 1 ms pause. The write puts back
+/// The step that fails in panel init is a write to the expander (0x20) right after the
+/// absent second expander (0x22) NACKs. Replays that pair three ways, logging only after
+/// each pair (a log line takes milliseconds): raw driver; through the shared-bus
+/// `RefCellDevice` the panel uses; and through it with a 1 ms pause. The write puts back
 /// the IODIRA value just read, so nothing changes. Enabled with INKPRINT_I2C_DIAG=1.
 #[cfg(any(feature = "inkplate6", feature = "inkplate6v2"))]
 #[allow(clippy::large_stack_frames, reason = "diagnostic run once at boot on main's stack")]
-fn i2c_diagnostics(i2c: &mut I2c<'_, esp_hal::Blocking>) {
+fn i2c_diagnostics(bus: &RefCell<I2c<'static, esp_hal::Blocking>>) {
+    use embedded_hal::i2c::I2c as _;
+
     let mut iodir = [0u8; 1];
-    let read = i2c.write_read(0x20, &[0x00], &mut iodir);
+    let read = bus.borrow_mut().write_read(0x20, &[0x00], &mut iodir);
     info!("diag: read 0x20 IODIRA: {read:?} -> {:02x}", iodir[0]);
     let restore = [0x00, iodir[0]];
     let mut absent = [0u8; 22];
 
-    let (nack, write) = (i2c.write_read(0x22, &[0x00], &mut absent), i2c.write(0x20, &restore));
-    info!("diag A immediate:   NACK {nack:?}, then write {write:?}");
+    let (nack, write) = {
+        let mut i2c = bus.borrow_mut();
+        (i2c.write_read(0x22, &[0x00], &mut absent), i2c.write(0x20, &restore))
+    };
+    info!("diag A raw, immediate:          NACK {nack:?}, then write {write:?}");
 
-    let nack = i2c.write_read(0x22, &[0x00], &mut absent);
+    let mut dev = RefCellDevice::new(bus);
+    let (nack, write) = (dev.write_read(0x22, &[0x00], &mut absent), dev.write(0x20, &restore));
+    info!("diag B RefCellDevice, immediate: NACK {nack:?}, then write {write:?}");
+
+    let nack = dev.write_read(0x22, &[0x00], &mut absent);
     Delay::new().delay_millis(1);
-    let write = i2c.write(0x20, &restore);
-    info!("diag C 1 ms gap:    NACK {nack:?}, then write {write:?}");
+    let write = dev.write(0x20, &restore);
+    info!("diag C RefCellDevice, 1 ms gap:  NACK {nack:?}, then write {write:?}");
 }
 
 /// Logs every 7-bit address that acknowledges on the bus. The PMIC (0x48) only answers

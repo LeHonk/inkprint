@@ -88,12 +88,14 @@ pub struct Printer<B: Board> {
     /// Uptime seen by the last request, and of the last printer-state change.
     clock: u32,
     state_changed: u32,
+    /// Unix time at uptime 0, once known.
+    boot_unix: Option<u64>,
     _board: PhantomData<B>,
 }
 
 impl<B: Board> Printer<B> {
     pub fn new(config: Config) -> Self {
-        Self { config, jobs: JobTable::new(), next_job_id: 1, busy: false, clock: 0, state_changed: 0, _board: PhantomData }
+        Self { config, jobs: JobTable::new(), next_job_id: 1, busy: false, clock: 0, state_changed: 0, boot_unix: None, _board: PhantomData }
     }
 
     /// `now` is seconds since boot (for `printer-up-time` and job timestamps).
@@ -165,6 +167,12 @@ impl<B: Board> Printer<B> {
 
     pub fn jobs(&self) -> &JobTable {
         &self.jobs
+    }
+
+    /// Sets the wall clock: `now_unix` is the current Unix time, `uptime` seconds since boot.
+    /// Date-time attributes report real time from then on.
+    pub fn set_wall_clock(&mut self, now_unix: u64, uptime: u32) {
+        self.boot_unix = Some(now_unix.saturating_sub(u64::from(uptime)));
     }
 
     fn set_busy(&mut self, busy: bool) {
@@ -372,7 +380,13 @@ impl<B: Board> Printer<B> {
         let requested: Option<alloc::vec::Vec<&str>> = req
             .op_attr("requested-attributes")
             .map(|a| a.values.iter().filter_map(Value::as_str).collect());
-        let status = PrinterStatus { now, busy: self.busy, queued: self.jobs.active_count(), state_changed: self.state_changed };
+        let status = PrinterStatus {
+            now,
+            busy: self.busy,
+            queued: self.jobs.active_count(),
+            state_changed: self.state_changed,
+            boot_unix: self.boot_unix,
+        };
         let mut all = printer_attributes::<B>(&self.config, status);
         let names = requested.unwrap_or_default();
         let everything =
