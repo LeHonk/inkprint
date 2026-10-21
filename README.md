@@ -138,5 +138,6 @@ shell. Boards with revision 3.0 or later (ESP32-WROVER-E) need nothing.
 MIT OR Apache-2.0, except the display driver ported from Soldered's
 [Inkplate-Arduino-library](https://github.com/SolderedElectronics/Inkplate-Arduino-library):
 the `epd-inkplate` crate and `firmware/src/panel_bus.rs` are LGPL-3.0-only (see
-`epd-inkplate/LICENSE`). Firmware binaries link them statically; since the full source
-is published, users can rebuild and relink as the LGPL requires.
+`LICENSE-LGPL-3.0`, which builds on `LICENSE-GPL-3.0`). Firmware binaries link them
+statically; since the full source is published, users can rebuild and relink as the LGPL
+requires. Release downloads include all four license texts.
