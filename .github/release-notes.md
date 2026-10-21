@@ -27,7 +27,10 @@ For each board there are three files:
 
 ## Flashing
 
-With [esptool](https://docs.espressif.com/projects/esptool/) (`pip install esptool`):
+The easiest way is the [web flasher](https://lehonk.github.io/inkprint/) in desktop
+Chrome or Edge. It installs the latest release.
+
+Or with [esptool](https://docs.espressif.com/projects/esptool/) (`pip install esptool`):
 
 ```bash
 esptool.py --chip esp32 write_flash 0x0 inkprint-<version>-inkplate6-full.bin      # first install

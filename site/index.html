@@ -1,0 +1,196 @@
+<!doctype html>
+<!-- Web flasher for the latest release. Deployed to GitHub Pages by the `pages` job in
+     .github/workflows/release.yml, which replaces @VERSION@ and adds manifests/ and firmware/. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inkprint Flasher</title>
+  <meta name="description" content="Install Inkprint, a network printer for Inkplate e-paper boards, from the browser.">
+  <script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #fafaf7;
+      --fg: #1c1c1a;
+      --muted: #5d5d58;
+      --card: #ffffff;
+      --line: #dcdcd4;
+      --accent: #1c1c1a;
+      --accent-fg: #fafaf7;
+      --warn-bg: #fff4d6;
+      --warn-line: #e3c25b;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #161615;
+        --fg: #ecece6;
+        --muted: #a3a39b;
+        --card: #1f1f1d;
+        --line: #3a3a36;
+        --accent: #ecece6;
+        --accent-fg: #161615;
+        --warn-bg: #3a2f10;
+        --warn-line: #8a6d1c;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    main { max-width: 760px; margin: 0 auto; padding: 40px 16px 64px; }
+    h1 { font-size: 2rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+    h2 { font-size: 1.15rem; margin: 40px 0 12px; }
+    h3 { font-size: 1.05rem; margin: 0; }
+    p { margin: 0 0 12px; }
+    .lead { color: var(--muted); margin-bottom: 24px; }
+    .version { font-family: ui-monospace, monospace; font-size: 0.9em; }
+    code { font-family: ui-monospace, monospace; font-size: 0.9em; overflow-wrap: anywhere; }
+    a { color: inherit; }
+    .boards { display: grid; gap: 12px; }
+    .board {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .board p { color: var(--muted); font-size: 0.95rem; margin: 4px 0 12px; }
+    .board.unsafe { border-color: var(--warn-line); }
+    .tag {
+      display: inline-block;
+      font-size: 0.75rem;
+      padding: 1px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      margin-left: 6px;
+      vertical-align: 2px;
+    }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    button {
+      font: inherit;
+      font-size: 0.95rem;
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: var(--accent-fg);
+      cursor: pointer;
+    }
+    button.secondary { background: transparent; color: var(--fg); }
+    .notice {
+      background: var(--warn-bg);
+      border: 1px solid var(--warn-line);
+      border-radius: 10px;
+      padding: 12px 16px;
+      margin-bottom: 24px;
+    }
+    .unsupported { display: none; }
+    ol, ul { padding-left: 1.3em; margin: 0 0 12px; }
+    li { margin-bottom: 6px; }
+    footer { margin-top: 48px; color: var(--muted); font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Inkprint</h1>
+  <p class="lead">
+    Turns an Inkplate e-paper board into a network printer: print a page from a phone or
+    computer and it stays on the panel. Firmware <span class="version">@VERSION@</span>,
+    an experimental pre-release.
+  </p>
+
+  <div class="notice unsupported" id="unsupported">
+    This browser can't talk to USB serial devices. Use desktop Chrome or Edge, or flash
+    with esptool as described in the
+    <a href="https://github.com/LeHonk/inkprint/releases">release notes</a>.
+  </div>
+
+  <h2>1. Pick your board</h2>
+  <div class="boards">
+    <section class="board">
+      <h3>Inkplate 6 <span class="tag">untested</span></h3>
+      <p>ESP32 revision 3.0 or later.</p>
+      <div class="actions">
+        <esp-web-install-button manifest="manifests/inkplate6-install.json">
+          <button slot="activate">Install</button>
+        </esp-web-install-button>
+        <esp-web-install-button manifest="manifests/inkplate6-update.json">
+          <button slot="activate" class="secondary">Update, keep settings</button>
+        </esp-web-install-button>
+      </div>
+    </section>
+
+    <section class="board unsafe">
+      <h3>Inkplate 6, early boards <span class="tag">tested</span></h3>
+      <p>
+        ESP32 revision 1. These chips have a PSRAM bug the firmware can't work around:
+        expect occasional corrupted pages or crashes. If the board hangs during a refresh,
+        reset or unplug it, since the panel's high voltage may stay on.
+      </p>
+      <div class="actions">
+        <esp-web-install-button manifest="manifests/inkplate6-rev1-unsafe-install.json">
+          <button slot="activate">Install</button>
+        </esp-web-install-button>
+        <esp-web-install-button manifest="manifests/inkplate6-rev1-unsafe-update.json">
+          <button slot="activate" class="secondary">Update, keep settings</button>
+        </esp-web-install-button>
+      </div>
+    </section>
+
+    <section class="board">
+      <h3>Inkplate 6 v2 <span class="tag">untested</span></h3>
+      <p>ESP32 revision 3.0 or later.</p>
+      <div class="actions">
+        <esp-web-install-button manifest="manifests/inkplate6v2-install.json">
+          <button slot="activate">Install</button>
+        </esp-web-install-button>
+        <esp-web-install-button manifest="manifests/inkplate6v2-update.json">
+          <button slot="activate" class="secondary">Update, keep settings</button>
+        </esp-web-install-button>
+      </div>
+    </section>
+  </div>
+
+  <h2>Which Inkplate 6 do I have?</h2>
+  <p>
+    Early Inkplate 6 boards have a revision 1 ESP32. If you're not sure, try the regular
+    Inkplate 6 install first. On a revision 1 chip it won't start: after installing, the
+    log (“Logs &amp; Console” in the installer) shows the bootloader refusing the image
+    because of the chip revision. Then install the early-boards version instead. Nothing
+    is harmed by trying.
+  </p>
+
+  <h2>2. Install</h2>
+  <ol>
+    <li>Connect the board with a USB data cable and switch it on.</li>
+    <li>Click <strong>Install</strong> and pick the board's serial port. On Linux you may
+      need to be in the <code>dialout</code> group.</li>
+    <li><strong>Install</strong> erases saved settings. Use <strong>Update, keep settings</strong>
+      to upgrade a board that is already set up.</li>
+  </ol>
+
+  <h2>3. Set up Wi-Fi</h2>
+  <ol>
+    <li>On first start the board opens a Wi-Fi network called <code>Inkprint-xxxx</code> and
+      shows instructions on the panel.</li>
+    <li>Join it with a phone. The setup page opens (or browse to
+      <code>http://192.168.4.1/setup</code>).</li>
+    <li>Pick your network, enter its password and a location, and save. The board restarts
+      and appears as a printer named “Inkplate 6 (xxxx)”.</li>
+  </ol>
+
+  <footer>
+    <a href="https://github.com/LeHonk/inkprint">Source and documentation</a> ·
+    <a href="https://github.com/LeHonk/inkprint/releases">All releases</a> ·
+    <a href="https://github.com/LeHonk/inkprint/issues">Report a problem</a>
+  </footer>
+</main>
+<script>
+  if (!("serial" in navigator)) document.getElementById("unsupported").style.display = "block";
+</script>
+</body>
+</html>

@@ -78,6 +78,11 @@ the Inkplate 6 (including early ESP32 revision 1 boards) and the Inkplate 6 v2. 
 release notes explain which file to pick and how to flash it with esptool or espflash.
 They start in Wi-Fi setup mode; no credentials are compiled in.
 
+The [web flasher](https://lehonk.github.io/inkprint/) installs the latest release from
+desktop Chrome or Edge, no tools needed. Its page is `site/index.html`; the release
+workflow's `pages` job adds the images and ESP Web Tools manifests and deploys it to
+GitHub Pages (Settings → Pages → Source must be "GitHub Actions").
+
 Pushing a `v*` tag that matches `firmware/Cargo.toml`'s version runs
 `.github/workflows/release.yml`, which builds the images and publishes a pre-release
 with `.github/release-notes.md` as the description. Running the workflow by hand builds

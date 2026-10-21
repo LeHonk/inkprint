@@ -121,3 +121,51 @@ jobs:
             --title "inkprint $GITHUB_REF_NAME" \
             --notes-file .github/release-notes.md \
             --generate-notes
+
+  # The web flasher (site/) with this release's images, on GitHub Pages. Requires
+  # Settings → Pages → Source: GitHub Actions. The images are copied into the site
+  # because release downloads can't be fetched cross-origin by the page.
+  pages:
+    name: Deploy web flasher
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site/firmware _site/manifests
+          sed "s/@VERSION@/$GITHUB_REF_NAME/g" site/index.html > _site/index.html
+          cp dist/*.bin _site/firmware/
+          for variant in inkplate6 inkplate6-rev1-unsafe inkplate6v2; do
+            base="inkprint-$GITHUB_REF_NAME-$variant"
+            test -f "_site/firmware/$base-full.bin" -a -f "_site/firmware/$base-app.bin"
+            # Paths in a manifest are relative to the manifest.
+            jq -n --arg name "Inkprint ($variant)" --arg v "$GITHUB_REF_NAME" --arg path "../firmware/$base-full.bin" \
+              '{name: $name, version: $v, new_install_prompt_erase: true,
+                builds: [{chipFamily: "ESP32", parts: [{path: $path, offset: 0}]}]}' \
+              > "_site/manifests/$variant-install.json"
+            jq -n --arg name "Inkprint ($variant)" --arg v "$GITHUB_REF_NAME" --arg path "../firmware/$base-app.bin" \
+              '{name: $name, version: $v, new_install_prompt_erase: false,
+                builds: [{chipFamily: "ESP32", parts: [{path: $path, offset: 65536}]}]}' \
+              > "_site/manifests/$variant-update.json"
+          done
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
