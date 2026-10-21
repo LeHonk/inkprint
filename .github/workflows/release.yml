@@ -1,0 +1,123 @@
+# Builds flashable firmware images and, for a `v*` tag, publishes them as a GitHub
+# pre-release. Run it by hand (Actions → Release → Run workflow) to get the images as
+# workflow artifacts without publishing anything.
+#
+# Credentials are never compiled in: WIFI_SSID / WIFI_PASSWORD are unset here, so the
+# images start in setup mode (see README, "Wi-Fi setup").
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.variant }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: inkplate6
+            features: -F inkplate6
+            min_chip_rev: ""
+          # Early Inkplate 6 boards (ESP32 rev 1). See README, "ESP32 revision 1 boards".
+          - variant: inkplate6-rev1-unsafe
+            features: -F inkplate6
+            min_chip_rev: "100"
+          - variant: inkplate6v2
+            features: --no-default-features -F inkplate6v2
+            min_chip_rev: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags, for `git describe` in firmware/build.rs
+
+      - name: Check the tag matches the firmware version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' firmware/Cargo.toml | head -1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match firmware/Cargo.toml version $version"
+            exit 1
+          fi
+
+      - uses: esp-rs/xtensa-toolchain@v1.6
+        with:
+          default: true
+          buildtargets: esp32
+          ldproxy: false
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: espflash@4.6.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: firmware
+          key: ${{ matrix.variant }}
+
+      - name: Build
+        working-directory: firmware
+        env:
+          ESP_HAL_CONFIG_MIN_CHIP_REVISION: ${{ matrix.min_chip_rev }}
+        run: |
+          if [ -n "${WIFI_SSID-}${WIFI_PASSWORD-}" ]; then
+            echo "::error::WIFI_SSID / WIFI_PASSWORD must not be set for release images"
+            exit 1
+          fi
+          [ -n "$ESP_HAL_CONFIG_MIN_CHIP_REVISION" ] || unset ESP_HAL_CONFIG_MIN_CHIP_REVISION
+          cargo build --release ${{ matrix.features }}
+
+      - name: Make images
+        working-directory: firmware
+        run: |
+          version=$(git describe --tags --always --dirty)
+          name="inkprint-$version-${{ matrix.variant }}"
+          elf=target/xtensa-esp32-none-elf/release/inkprint
+          mkdir -p ../dist
+          # Bootloader + partition table + app, flashed at 0x0. Also erases the settings.
+          espflash save-image -S --chip esp32 --merge --skip-padding "$elf" "../dist/$name-full.bin"
+          # App only, flashed at 0x10000. Keeps the settings.
+          espflash save-image -S --chip esp32 "$elf" "../dist/$name-app.bin"
+          cp "$elf" "../dist/$name.elf"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.variant }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish pre-release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Add licenses and checksums
+        run: |
+          cp LICENSE-MIT LICENSE-APACHE LICENSE-LGPL-3.0 LICENSE-GPL-3.0 dist/
+          cd dist && sha256sum * > SHA256SUMS
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --prerelease \
+            --title "inkprint $GITHUB_REF_NAME" \
+            --notes-file .github/release-notes.md \
+            --generate-notes

@@ -71,6 +71,22 @@ export WIFI_SSID='my network'
 export WIFI_PASSWORD='secret'      # empty for an open network
 ```
 
+### Prebuilt firmware
+
+[Releases](https://github.com/LeHonk/inkprint/releases) have ready-to-flash images for
+the Inkplate 6 (including early ESP32 revision 1 boards) and the Inkplate 6 v2. The
+release notes explain which file to pick and how to flash it with esptool or espflash.
+They start in Wi-Fi setup mode; no credentials are compiled in.
+
+Pushing a `v*` tag that matches `firmware/Cargo.toml`'s version runs
+`.github/workflows/release.yml`, which builds the images and publishes a pre-release
+with `.github/release-notes.md` as the description. Running the workflow by hand builds
+the same images as workflow artifacts without publishing.
+
+The firmware version (`git describe`, e.g. `v0.1.0` or `v0.1.0-3-gabc1234-dirty`) is in
+the boot log, on the status screen, on the `http://inkplate-xxxx.local:631/` page and in
+the IPP `printer-firmware-string-version` attribute.
+
 ### Building and flashing
 
 ```bash
