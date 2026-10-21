@@ -101,6 +101,10 @@ pub fn printer_attributes<B: Board>(config: &Config, status: PrinterStatus) -> G
     g.push("printer-state-change-date-time", [status.date_time(state_changed)]);
     g.push("queued-job-count", [Value::Integer(queued as i32)]);
     g.push("printer-kind", keywords(&["document"]));
+    // PWG 5100.13: one firmware component, the whole image.
+    g.push("printer-firmware-name", [Value::name("inkprint")]);
+    g.push("printer-firmware-string-version", [Value::text(&config.firmware_version)]);
+    g.push("printer-firmware-version", [Value::Other(ValueTag::OctetString as u8, config.firmware_version.as_bytes().to_vec())]);
     g.push("printer-device-id", [Value::text(&format!("MFG:Soldered;MDL:{};CMD:PWGRaster,URF;", B::MODEL))]);
     g.push("printer-geo-location", [Value::OutOfBand(ValueTag::Unknown as u8)]);
     g.push("printer-organization", [Value::text("")]);

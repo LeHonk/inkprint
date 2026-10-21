@@ -10,3 +10,6 @@ pub mod net;
 pub mod panel_bus;
 pub mod portal;
 pub mod time;
+
+/// Firmware version: `git describe` at build time (see build.rs), else the package version.
+pub const VERSION: &str = env!("INKPRINT_VERSION");

@@ -1,7 +1,10 @@
 //! Text screens (the Identify-Printer status screen), drawn with embedded-graphics' built-in
 //! 10×20 font scaled up so it reads from across a kitchen.
 
+use alloc::format;
 use alloc::string::String;
+use alloc::vec::Vec;
+use core::net::Ipv4Addr;
 
 use embedded_graphics::mono_font::MonoTextStyle;
 use embedded_graphics::mono_font::ascii::FONT_10X20;
@@ -15,6 +18,64 @@ use crate::GrayImage;
 pub struct Line<'a> {
     pub text: &'a str,
     pub scale: u32,
+}
+
+/// What the Identify-Printer status screen shows.
+pub struct Status<'a> {
+    /// Firmware version, shown small at the bottom.
+    pub version: &'a str,
+    /// `None` before Wi-Fi is configured.
+    pub printer: Option<PrinterStatus<'a>>,
+}
+
+pub struct PrinterStatus<'a> {
+    /// mDNS instance name, e.g. "Inkplate 6 (a1b2)".
+    pub instance: &'a str,
+    /// Without ".local".
+    pub hostname: &'a str,
+    /// `None` until DHCP completes.
+    pub ip: Option<Ipv4Addr>,
+    pub last_job: Option<LastJob<'a>>,
+}
+
+pub struct LastJob<'a> {
+    pub name: &'a str,
+    pub pages: u32,
+    /// Seconds since it completed.
+    pub age: u32,
+}
+
+/// Lines of the status screen: (text, font scale), for [`text_screen`].
+pub fn status_lines(status: &Status<'_>) -> Vec<(String, u32)> {
+    let mut lines = alloc::vec![("Inkprint".into(), 3)];
+    match &status.printer {
+        None => lines.push(("No Wi-Fi configured".into(), 2)),
+        Some(p) => {
+            lines.push((p.instance.into(), 2));
+            lines.push((String::new(), 1));
+            lines.push((if p.ip.is_some() { "Ready to print" } else { "Connecting..." }.into(), 2));
+            lines.push((format!("{}.local", p.hostname), 2));
+            if let Some(ip) = p.ip {
+                lines.push((format!("IP {ip}"), 2));
+            }
+            lines.push((String::new(), 1));
+            match &p.last_job {
+                Some(job) => {
+                    let ago = match job.age / 60 {
+                        0 => "just now".into(),
+                        m if m < 120 => format!("{m} min ago"),
+                        m => format!("{} h ago", m / 60),
+                    };
+                    lines.push((format!("Last job: {}", job.name), 2));
+                    lines.push((format!("{} page{}, {ago}", job.pages, if job.pages == 1 { "" } else { "s" }), 2));
+                }
+                None => lines.push(("No jobs yet".into(), 2)),
+            }
+        }
+    }
+    lines.push((String::new(), 1));
+    lines.push((format!("Firmware {}", status.version), 1));
+    lines
 }
 
 /// Draws onto a [`GrayImage`] with every font pixel blown up to `scale × scale`.
@@ -93,6 +154,28 @@ mod tests {
         assert_eq!(ink(&img, 200, 800), 0);
         // Pure black text on white: nothing in between for the panel to dither.
         assert!(img.pixels.iter().all(|&p| p == 0 || p == 255));
+    }
+
+    #[test]
+    fn status_ends_with_firmware_version() {
+        let status = Status {
+            version: "v0.1.0",
+            printer: Some(PrinterStatus {
+                instance: "Inkplate 6 (a1b2)",
+                hostname: "inkplate-a1b2",
+                ip: Some(Ipv4Addr::new(192, 168, 1, 42)),
+                last_job: Some(LastJob { name: "Pancakes", pages: 1, age: 150 }),
+            }),
+        };
+        let lines = status_lines(&status);
+        let texts: Vec<&str> = lines.iter().map(|(t, _)| t.as_str()).collect();
+        assert!(texts.contains(&"IP 192.168.1.42"));
+        assert!(texts.contains(&"1 page, 2 min ago"));
+        assert_eq!(lines.last().unwrap(), &(String::from("Firmware v0.1.0"), 1));
+
+        let unconfigured = status_lines(&Status { version: "v0.1.0", printer: None });
+        assert_eq!(unconfigured[1].0, "No Wi-Fi configured");
+        assert_eq!(unconfigured.last().unwrap().0, "Firmware v0.1.0");
     }
 
     #[test]

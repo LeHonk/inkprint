@@ -46,6 +46,7 @@ async fn main() -> std::io::Result<()> {
         location: "Simulator".into(),
         more_info: format!("http://{host}.local:{port}/"),
         icon: None,
+        firmware_version: env!("CARGO_PKG_VERSION").into(),
     };
     print_avahi_command::<Selected>(&config, port);
 

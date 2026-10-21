@@ -20,6 +20,7 @@ pub fn config(port: u16) -> Config {
         location: "Test kitchen".into(),
         more_info: format!("http://localhost:{port}/"),
         icon: Some(format!("http://localhost:{port}{}", ipp_http::ICON_PATH)),
+        firmware_version: env!("CARGO_PKG_VERSION").into(),
     }
 }
 

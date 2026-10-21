@@ -1,8 +1,32 @@
 fn main() {
     linker_be_nice();
     check_xtensa_linker_available();
+    embed_version();
     // make sure linkall.x is the last linker script (otherwise might cause problems with flip-link)
     println!("cargo:rustc-link-arg=-Tlinkall.x");
+}
+
+/// Sets `INKPRINT_VERSION` from `git describe` (e.g. `v0.1.0`, `v0.1.0-3-gabc1234-dirty`),
+/// falling back to the package version outside a git checkout.
+fn embed_version() {
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+    };
+    let version = git(&["describe", "--tags", "--always", "--dirty"])
+        .unwrap_or_else(|| format!("v{}", std::env::var("CARGO_PKG_VERSION").unwrap()));
+    println!("cargo:rustc-env=INKPRINT_VERSION={version}");
+    // Rebuild when HEAD moves or the index changes (commits, checkouts, staging).
+    if let Some(dir) = git(&["rev-parse", "--absolute-git-dir"]) {
+        println!("cargo:rerun-if-changed={dir}/HEAD");
+        println!("cargo:rerun-if-changed={dir}/index");
+        println!("cargo:rerun-if-changed={dir}/refs/tags");
+    }
 }
 
 #[cfg(unix)]

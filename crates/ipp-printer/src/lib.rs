@@ -67,6 +67,9 @@ pub struct Config {
     pub more_info: String,
     /// URL of a PNG icon (`printer-icons`), shown by macOS and iOS.
     pub icon: Option<String>,
+    /// Firmware version, e.g. "v0.1.0" or a `git describe` string
+    /// (`printer-firmware-string-version`).
+    pub firmware_version: String,
 }
 
 /// Operations answered by [`Printer::handle`] (the IPP Everywhere required set).
@@ -450,7 +453,7 @@ fn filter_job_attributes(group: &mut ipp_codec::Group, req: &Message, default: O
 mod tests {
     use super::*;
     use board::Inkplate6;
-    use ipp_codec::{Group, StrTag};
+    use ipp_codec::{Group, StrTag, ValueTag};
 
     fn printer() -> Printer<Inkplate6> {
         Printer::new(Config {
@@ -460,6 +463,7 @@ mod tests {
             location: String::from("Kitchen"),
             more_info: String::from("http://inkplate.local/"),
             icon: Some(String::from("http://inkplate.local/icon.png")),
+            firmware_version: String::from("v0.1.0"),
         })
     }
 
@@ -504,6 +508,17 @@ mod tests {
         assert_eq!(keywords("media-default"), ["iso_a6_105x148mm"]);
         assert_eq!(keywords("media-ready"), ["iso_a6_105x148mm", "na_index-4x6_4x6in"]);
         assert_eq!(attrs.get("media-col-ready").unwrap().values.len(), 2);
+    }
+
+    #[test]
+    fn firmware_version_is_reported() {
+        let mut p = printer();
+        let resp = respond(p.handle(&request(Operation::GetPrinterAttributes, &[]), 0));
+        let attrs = resp.group(DelimiterTag::Printer).unwrap();
+        let first = |name: &str| attrs.get(name).unwrap().values[0].clone();
+        assert_eq!(first("printer-firmware-name").as_str(), Some("inkprint"));
+        assert_eq!(first("printer-firmware-string-version").as_str(), Some("v0.1.0"));
+        assert_eq!(first("printer-firmware-version"), Value::Other(ValueTag::OctetString as u8, b"v0.1.0".to_vec()));
     }
 
     #[test]

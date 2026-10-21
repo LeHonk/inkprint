@@ -227,11 +227,12 @@ impl<'a, B: Board, M: RawMutex, S: DocumentSink> IppHandler<'a, B, M, S> {
             let p = p.borrow();
             let jobs = p.jobs().iter().count();
             format!(
-                "{}\n{} on {}\nIPP: {}\nRecent jobs: {}\n",
+                "{}\n{} on {}\nIPP: {}\nFirmware: {}\nRecent jobs: {}\n",
                 p.config.name,
                 B::MODEL,
                 p.config.location,
                 p.config.uri,
+                p.config.firmware_version,
                 jobs
             )
         })

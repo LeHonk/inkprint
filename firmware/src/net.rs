@@ -74,24 +74,10 @@ pub fn publish(identity: &'static Identity, printer: &'static SharedPrinter) {
 
 /// Text for the Identify-Printer status screen: (line, font scale).
 pub fn status_lines() -> Vec<(String, u32)> {
-    let mut lines = alloc::vec![("Inkprint".into(), 3)];
     let Some(info) = NET_INFO.try_get() else {
-        lines.push(("No Wi-Fi configured".into(), 2));
-        return lines;
+        return render::status_lines(&render::Status { version: crate::VERSION, printer: None });
     };
     let ip = Ipv4Addr::from_bits(IPV4.load(Ordering::Relaxed));
-    lines.push((info.identity.instance.into(), 2));
-    lines.push((String::new(), 1));
-    if ip.is_unspecified() {
-        lines.push(("Connecting...".into(), 2));
-    } else {
-        lines.push(("Ready to print".into(), 2));
-    }
-    lines.push((format!("{}.local", info.identity.hostname), 2));
-    if !ip.is_unspecified() {
-        lines.push((format!("IP {ip}"), 2));
-    }
-    lines.push((String::new(), 1));
     let now = uptime();
     let last = info.printer.lock(|p| {
         let p = p.borrow();
@@ -99,21 +85,17 @@ pub fn status_lines() -> Vec<(String, u32)> {
             .iter()
             .filter(|j| j.state == JobState::Completed)
             .max_by_key(|j| j.id)
-            .map(|j| (j.name.clone(), j.pages, j.completed.unwrap_or(now)))
+            .map(|j| (j.name.clone(), j.pages, now.saturating_sub(j.completed.unwrap_or(now))))
     });
-    match last {
-        Some((name, pages, at)) => {
-            let ago = match now.saturating_sub(at) / 60 {
-                0 => "just now".into(),
-                m if m < 120 => format!("{m} min ago"),
-                m => format!("{} h ago", m / 60),
-            };
-            lines.push((format!("Last job: {name}"), 2));
-            lines.push((format!("{pages} page{}, {ago}", if pages == 1 { "" } else { "s" }), 2));
-        }
-        None => lines.push(("No jobs yet".into(), 2)),
-    }
-    lines
+    render::status_lines(&render::Status {
+        version: crate::VERSION,
+        printer: Some(render::PrinterStatus {
+            instance: info.identity.instance,
+            hostname: info.identity.hostname,
+            ip: (!ip.is_unspecified()).then_some(ip),
+            last_job: last.as_ref().map(|(name, pages, age)| render::LastJob { name, pages: *pages, age: *age }),
+        }),
+    })
 }
 
 /// Sends pages to the display task and Identify-Printer to [`IDENTIFY`].
@@ -181,6 +163,7 @@ impl Identity {
             location: location.into(),
             more_info: format!("http://{}.local:{IPP_PORT}/", self.hostname),
             icon: Some(format!("http://{}.local:{IPP_PORT}{}", self.hostname, ipp_http::ICON_PATH)),
+            firmware_version: crate::VERSION.into(),
         }
     }
 }

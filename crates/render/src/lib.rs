@@ -16,7 +16,7 @@ mod text;
 
 pub use gray::{GrayImage, Rect};
 pub use quantize::{BRIGHTNESS_RANGE, adjust_brightness, dither_mono, quantize_gray3};
-pub use text::{Line, text_screen};
+pub use text::{LastJob, Line, PrinterStatus, Status, status_lines, text_screen};
 
 use alloc::vec::Vec;
 use board::{Board, Rotation};

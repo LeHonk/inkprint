@@ -29,6 +29,7 @@ fn main() {
         location: "Host".into(),
         more_info: format!("http://localhost:{port}/"),
         icon: Some(format!("http://localhost:{port}{}", ipp_http::ICON_PATH)),
+        firmware_version: env!("CARGO_PKG_VERSION").into(),
     };
     let printer = Mutex::<NoopRawMutex, _>::new(RefCell::new(Printer::<Inkplate6>::new(config)));
     let show = |page: render::GrayImage| println!("last page: {}x{}", page.width, page.height);
